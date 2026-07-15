@@ -1,4 +1,6 @@
 # Развёртывание Zabbix Agent на предприятии через GPO
+# Created by Drem
+#TFGI
 
 Методичка по автоматической установке Zabbix Agent на все компьютеры домена
 через Group Policy Startup Script. Написана по горячим следам реального
