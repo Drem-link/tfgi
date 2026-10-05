@@ -31,6 +31,13 @@
       <div class="globe-stage">
         <canvas id="globe" aria-label="Вращаемый глобус с геологическими объектами"></canvas>
         <div id="globe-tooltip" class="globe-tooltip" hidden></div>
+        <section id="globe-selection" class="globe-selection" aria-live="polite" hidden>
+          <button id="close-selection" class="selection-close" type="button" aria-label="Закрыть карточку">×</button>
+          <p class="eyebrow">ТОЧКА НА ГЛОБУСЕ</p>
+          <h2 id="selection-title"></h2>
+          <p id="selection-location" class="selection-location"></p>
+          <div id="selection-documents"></div>
+        </section>
         <div class="globe-overlay">
           <span class="live-dot"></span> ГЛОБУС · WGS 84
         </div>

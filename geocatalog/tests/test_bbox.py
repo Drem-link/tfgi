@@ -158,6 +158,20 @@ def test_offline_country_boundaries_are_bundled():
     assert all(feature["properties"].get("ADMIN") for feature in data["features"])
 
 
+def test_magadan_demo_migration_adds_two_document_linked_points():
+    migration = Path(__file__).parents[1] / "sql/003_magadan_demo_points.sql"
+    sql = migration.read_text(encoding="utf-8")
+
+    assert sql.count("'well'") == 2
+    assert "DEMO-MAGADAN-0001" in sql
+    assert "DEMO-MAGADAN-0002" in sql
+    assert "150.80, 59.56" in sql
+    assert "151.45, 60.00" in sql
+    assert "ON CONFLICT (inventory_number) DO UPDATE" in sql
+    assert "ON CONFLICT (name) DO UPDATE" in sql
+    assert "ON CONFLICT DO NOTHING" in sql
+
+
 def test_bootstrap_admin_migration_trims_secret_files(monkeypatch):
     password_hash = PasswordHasher().hash("a-strong-test-password")
     monkeypatch.setenv("AUTH_USERNAME", "catalog-admin\n")

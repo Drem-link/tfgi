@@ -8,6 +8,7 @@ const tooltip = document.querySelector("#globe-tooltip");
 let features = [];
 let rotation = { longitude: 38, latitude: 54 };
 let zoom = 1;
+let targetZoom = 1;
 let dragging = false;
 let lastPointer = null;
 let dragOrigin = null;
@@ -16,6 +17,11 @@ let lastFrame = performance.now();
 let hoveredFeature = null;
 let globeGeometry = null;
 let countries = [];
+let selectedFeature = null;
+const selectionPanel = document.querySelector("#globe-selection");
+const selectionTitle = document.querySelector("#selection-title");
+const selectionLocation = document.querySelector("#selection-location");
+const selectionDocuments = document.querySelector("#selection-documents");
 
 function text(tag, value, className) {
   const element = document.createElement(tag);
@@ -64,6 +70,25 @@ function renderFeature(feature, target = results) {
 
 function kindLabel(kind) {
   return ({ well: "Скважина", area: "Площадь", site: "Участок", other: "Объект" })[kind] || kind;
+}
+
+function featureCoordinates(feature) {
+  const geometry = feature.geometry;
+  if (geometry.type === "Point") return [geometry.coordinates];
+  if (geometry.type === "MultiPoint") return geometry.coordinates;
+  return [];
+}
+
+function renderSelection(feature) {
+  selectedFeature = feature;
+  selectionTitle.textContent = feature.properties.name;
+  const coordinates = featureCoordinates(feature)[0] || firstPolygonCoordinate(feature.geometry);
+  selectionLocation.textContent = coordinates
+    ? `${coordinates[1].toFixed(4)}° с. ш., ${coordinates[0].toFixed(4)}° в. д.`
+    : "";
+  selectionDocuments.replaceChildren();
+  showDocuments(selectionDocuments, feature.properties.documents);
+  selectionPanel.hidden = false;
 }
 
 function resizeCanvas() {
@@ -278,13 +303,6 @@ function drawRing(ring, geometry, fill, stroke) {
   context.stroke();
 }
 
-function featureCoordinates(feature) {
-  const geometry = feature.geometry;
-  if (geometry.type === "Point") return [geometry.coordinates];
-  if (geometry.type === "MultiPoint") return geometry.coordinates;
-  return [];
-}
-
 function drawFeatureGeometry(feature, geometry) {
   const geo = feature.geometry;
   const area = feature.properties.kind === "area";
@@ -317,7 +335,10 @@ function drawFeatureGeometry(feature, geometry) {
 function drawGlobe(now) {
   const dt = Math.min((now - lastFrame) / 1000, 0.05);
   lastFrame = now;
-  if (!dragging && document.visibilityState === "visible") rotation.longitude = (rotation.longitude + dt * 2.2) % 360;
+  if (!dragging && !selectedFeature && document.visibilityState === "visible") {
+    rotation.longitude = (rotation.longitude + dt * 2.2) % 360;
+  }
+  zoom += (targetZoom - zoom) * Math.min(1, dt * 5);
 
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
@@ -335,7 +356,9 @@ function focusFeature(feature) {
   if (!coords) return;
   rotation.longitude = coords[0];
   rotation.latitude = coords[1];
+  targetZoom = Math.max(targetZoom, 1.38);
   hoveredFeature = feature;
+  renderSelection(feature);
   const card = [...results.children].find((item) => item.querySelector("h3")?.textContent === feature.properties.name);
   card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -423,7 +446,7 @@ canvas.addEventListener("pointercancel", () => {
 });
 canvas.addEventListener("wheel", (event) => {
   event.preventDefault();
-  zoom = Math.max(0.72, Math.min(1.45, zoom - Math.sign(event.deltaY) * 0.06));
+  targetZoom = Math.max(0.72, Math.min(1.65, targetZoom - Math.sign(event.deltaY) * 0.06));
 }, { passive: false });
 canvas.addEventListener("pointerleave", () => {
   if (!dragging) {
@@ -470,6 +493,11 @@ document.querySelector("#search-form").addEventListener("submit", (event) => {
 });
 document.querySelector("#search-form").addEventListener("reset", () => setTimeout(search, 0));
 document.querySelector("#logout").addEventListener("click", () => document.querySelector("#logout-form").requestSubmit());
+document.querySelector("#close-selection").addEventListener("click", () => {
+  selectionPanel.hidden = true;
+  selectedFeature = null;
+  targetZoom = 1;
+});
 fetch("/static/ne_110m_admin_0_countries.geojson")
   .then((response) => {
     if (!response.ok) throw new Error(`Не удалось загрузить офлайн-карту стран (${response.status})`);

@@ -78,6 +78,30 @@ main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(370px, .75
   pointer-events: none;
   transform: translateX(-50%);
 }
+.globe-selection {
+  position: absolute;
+  z-index: 3;
+  right: 16px;
+  bottom: 16px;
+  width: min(360px, calc(100% - 32px));
+  max-height: 44%;
+  overflow: auto;
+  padding: 15px;
+  border: 1px solid #817bd1;
+  background: rgba(10, 15, 35, .96);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .35);
+}
+.globe-selection h2 { margin: 0 24px 5px 0; font-size: .88rem; line-height: 1.4; }
+.globe-selection .eyebrow { margin-bottom: 7px; color: #9790e6; font-size: .58rem; }
+.selection-location { margin: 0 0 8px; color: #9ea4bf; font-size: .68rem; }
+.selection-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-height: 26px;
+  padding: 2px 7px;
+}
+.globe-selection .doc { margin-top: 7px; padding: 8px; }
 .globe-legend { justify-content: flex-start; flex-wrap: wrap; gap: 20px; }
 .globe-legend .hint { margin-left: auto; }
 .legend-dot, .legend-area { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #f2c5a5; }
