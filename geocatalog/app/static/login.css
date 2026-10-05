@@ -1,0 +1,53 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: #f2d0b2;
+  background: #070b1c;
+}
+* { box-sizing: border-box; }
+body {
+  display: grid;
+  min-height: 100vh;
+  margin: 0;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(ellipse at 50% 35%, #172043, #070b1c 70%);
+}
+.login-card {
+  width: min(100%, 430px);
+  padding: 38px;
+  border: 1px solid #817bd1;
+  background: rgba(11, 16, 37, .94);
+  box-shadow: 0 22px 70px #0008;
+}
+.mark { color: #f2c5a5; font-size: 2.2rem; }
+.eyebrow { margin: 22px 0 8px; color: #b6b2ef; font-size: .72rem; letter-spacing: .18em; }
+h1 { margin: 0; color: #fff0dd; font-size: 1.55rem; }
+.subtitle { color: #a9acc4; line-height: 1.55; }
+form { display: grid; gap: 10px; margin-top: 28px; }
+label { margin-top: 8px; color: #c5c2df; font-size: .85rem; }
+input {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid #3f476b;
+  border-radius: 3px;
+  outline: none;
+  background: #0d1328;
+  color: #fff0dd;
+  font: inherit;
+}
+input:focus { border-color: #b6b2ef; }
+button {
+  min-height: 46px;
+  margin-top: 16px;
+  border: 1px solid #f2c5a5;
+  border-radius: 3px;
+  background: #f2c5a5;
+  color: #101329;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.error { color: #ff9d9d; }
+.secure-note { margin: 22px 0 0; color: #8187a7; font-size: .72rem; line-height: 1.5; }

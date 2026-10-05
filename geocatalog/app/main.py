@@ -1,17 +1,82 @@
 import json
 import math
 import os
+import secrets
+import time
 from contextlib import closing
 from typing import Annotated
+from urllib.parse import parse_qs, urlsplit
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 app = FastAPI(title="Geological Library Map", version="0.1.0")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+password_hasher = PasswordHasher()
+login_failures: dict[str, list[float]] = {}
+session_max_age = 8 * 60 * 60
+login_window = 15 * 60
+login_failure_limit = 8
+
+
+def auth_config() -> tuple[str, str, URLSafeTimedSerializer]:
+    username = os.environ.get("AUTH_USERNAME", "")
+    password_hash = os.environ.get("AUTH_PASSWORD_HASH", "")
+    session_secret = os.environ.get("SESSION_SECRET", "")
+    if not username or not password_hash or len(session_secret) < 32:
+        raise RuntimeError("AUTH_USERNAME, AUTH_PASSWORD_HASH and a 32-character SESSION_SECRET are required")
+    return username, password_hash, URLSafeTimedSerializer(session_secret, salt="geocatalog-session-v1")
+
+
+def authenticated_user(request: Request) -> str | None:
+    try:
+        expected_username, _, serializer = auth_config()
+        username = serializer.loads(
+            request.cookies.get("geocatalog_session", ""),
+            max_age=session_max_age,
+        )
+    except (RuntimeError, BadSignature, SignatureExpired, TypeError):
+        return None
+    if not isinstance(username, str):
+        return None
+    return username if secrets.compare_digest(username.encode(), expected_username.encode()) else None
+
+
+def is_public_path(path: str) -> bool:
+    return path in {"/login", "/auth/login", "/healthz", "/livez", "/static/login.css", "/static/login.js"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    if is_public_path(request.url.path):
+        response = await call_next(request)
+    else:
+        user = authenticated_user(request)
+        if user is None:
+            if request.url.path.startswith("/api/"):
+                response = JSONResponse({"detail": "authentication required"}, status_code=401)
+            else:
+                response = RedirectResponse("/login", status_code=303)
+        else:
+            request.state.user = user
+            response = await call_next(request)
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; font-src 'self' data:; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+    )
+    return response
 
 
 def get_connection():
@@ -58,6 +123,83 @@ def decode_geojson(value):
 @app.get("/")
 def index():
     return FileResponse("app/static/index.html")
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse("app/static/login.html")
+
+
+@app.post("/auth/login")
+async def login(request: Request):
+    if request.url.scheme != "https":
+        raise HTTPException(status_code=426, detail="HTTPS is required for login")
+    host = request.headers.get("host", "")
+    origin = request.headers.get("origin")
+    if origin and urlsplit(origin).netloc != host:
+        raise HTTPException(status_code=403, detail="invalid request origin")
+    if request.headers.get("content-type", "").split(";", 1)[0] != "application/x-www-form-urlencoded":
+        raise HTTPException(status_code=415, detail="form-encoded credentials are required")
+    try:
+        body = (await request.body()).decode("utf-8")
+        form = parse_qs(body, keep_blank_values=True, strict_parsing=True)
+        username = form.get("username", [""])[0]
+        password = form.get("password", [""])[0]
+    except (UnicodeDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid login form") from None
+    if len(username) > 128 or len(password) > 1024:
+        raise HTTPException(status_code=400, detail="invalid login form")
+
+    client = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    for address, timestamps in list(login_failures.items()):
+        recent = [timestamp for timestamp in timestamps if now - timestamp < login_window]
+        if recent:
+            login_failures[address] = recent
+        else:
+            login_failures.pop(address)
+    recent_failures = [timestamp for timestamp in login_failures.get(client, []) if now - timestamp < login_window]
+    login_failures[client] = recent_failures
+    if len(recent_failures) >= login_failure_limit:
+        raise HTTPException(status_code=429, detail="too many login attempts; try again later")
+
+    try:
+        expected_username, password_hash, serializer = auth_config()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="authentication is not configured") from exc
+    try:
+        password_ok = password_hasher.verify(password_hash, password)
+    except (VerifyMismatchError, InvalidHashError, VerificationError):
+        password_ok = False
+    username_ok = secrets.compare_digest(username.encode(), expected_username.encode())
+    if not (username_ok and password_ok):
+        login_failures[client].append(now)
+        response = RedirectResponse("/login?error=invalid", status_code=303)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    login_failures.pop(client, None)
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(
+        "geocatalog_session",
+        serializer.dumps(expected_username),
+        max_age=session_max_age,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/",
+    )
+    return response
+
+
+@app.post("/auth/logout")
+def logout(request: Request):
+    origin = request.headers.get("origin")
+    if origin and urlsplit(origin).netloc != request.headers.get("host", ""):
+        raise HTTPException(status_code=403, detail="invalid request origin")
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie("geocatalog_session", path="/", secure=True, httponly=True, samesite="strict")
+    return response
 
 
 @app.get("/healthz")

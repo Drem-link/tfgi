@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Геологический каталог</title>
+  <link rel="stylesheet" href="/static/login.css">
+</head>
+<body>
+  <main class="login-card">
+    <div class="mark" aria-hidden="true">◉</div>
+    <p class="eyebrow">ВНУТРЕННЯЯ СИСТЕМА</p>
+    <h1>Геологический каталог</h1>
+    <p class="subtitle">Войдите, чтобы открыть карту и архивные метаданные.</p>
+    <form method="post" action="/auth/login" autocomplete="on">
+      <label for="username">Имя пользователя</label>
+      <input id="username" name="username" autocomplete="username" required maxlength="128" autofocus>
+      <label for="password">Пароль</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <button type="submit">Войти</button>
+    </form>
+    <p class="secure-note">Соединение защищено HTTPS. Не вводите пароль на странице с предупреждением о сертификате.</p>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>

@@ -4,36 +4,67 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Геологический каталог</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <header>
-    <div>
-      <h1>Геологический каталог</h1>
-      <p>Поиск материалов библиотеки по карте и метаданным</p>
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">◉</span>
+      <div>
+        <h1>Геологический каталог</h1>
+        <p><span id="feature-count">ЗАГРУЗКА…</span> · ПОИСК ПО ГЕОДАННЫМ И АРХИВНЫМ МЕТАДАННЫМ</p>
+      </div>
     </div>
-    <form id="search-form">
-      <input name="q" placeholder="Название, тема, описание">
-      <input name="region" placeholder="Регион">
-      <input name="year_from" type="number" min="1500" max="2200" placeholder="Год от">
-      <input name="year_to" type="number" min="1500" max="2200" placeholder="Год до">
-      <button type="submit">Найти</button>
-      <button type="reset" class="secondary">Сбросить</button>
-    </form>
+    <div class="header-actions">
+      <span class="user-label">● ЗАКРЫТЫЙ КАТАЛОГ</span>
+      <button id="logout" class="ghost-button" type="button">Выйти</button>
+      <form id="logout-form" method="post" action="/auth/logout" hidden></form>
+    </div>
   </header>
   <main>
-    <section id="map" aria-label="Карта геологических объектов"></section>
-    <aside>
+    <section class="globe-panel" aria-label="Интерактивный трёхмерный глобус">
+      <div class="panel-topline">
+        <span>ПРОСТРАНСТВЕННЫЙ ОБЗОР</span>
+        <span class="hint">ПЕРЕТАСКИВАЙТЕ · КОЛЁСИКО МАСШТАБИРУЙТЕ</span>
+      </div>
+      <div class="globe-stage">
+        <canvas id="globe" aria-label="Вращаемый глобус с геологическими объектами"></canvas>
+        <div id="globe-tooltip" class="globe-tooltip" hidden></div>
+        <div class="globe-overlay">
+          <span class="live-dot"></span> ГЛОБУС · WGS 84
+        </div>
+      </div>
+      <div class="globe-legend">
+        <span><i class="legend-dot"></i> Точка / скважина</span>
+        <span><i class="legend-area"></i> Площадь / контур</span>
+        <span class="hint">НАЖМИТЕ НА ОБЪЕКТ, ЧТОБЫ ЦЕНТРИРОВАТЬ</span>
+      </div>
+    </section>
+    <aside class="results-panel">
       <div class="results-heading">
-        <h2>Объекты и документы</h2>
+        <div>
+          <p class="eyebrow">КАТАЛОГ</p>
+          <h2>Объекты и документы</h2>
+        </div>
         <span id="result-count">Загрузка…</span>
       </div>
       <p id="message" role="status"></p>
+      <form id="search-form">
+        <label class="search-label" for="q">ПОИСК</label>
+        <input id="q" name="q" placeholder="Название, тема, описание" autocomplete="off">
+        <div class="filters">
+          <input name="region" placeholder="Регион">
+          <input name="year_from" type="number" min="1500" max="2200" placeholder="Год от">
+          <input name="year_to" type="number" min="1500" max="2200" placeholder="Год до">
+        </div>
+        <div class="form-actions">
+          <button type="submit">Найти</button>
+          <button type="reset" class="secondary">Сбросить</button>
+        </div>
+      </form>
       <div id="results"></div>
     </aside>
   </main>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js" defer></script>
 </body>
 </html>

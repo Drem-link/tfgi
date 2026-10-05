@@ -20,8 +20,24 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://geocatalog:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/geocatalog
+      AUTH_USERNAME: ${AUTH_USERNAME:?Set AUTH_USERNAME in .env}
+      AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:?Set AUTH_PASSWORD_HASH in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8443:8443"
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8443"
+      - --ssl-certfile
+      - /tls/tls.crt
+      - --ssl-keyfile
+      - /tls/tls.key
+    volumes:
+      - ./tls:/tls:ro
     depends_on:
       db:
         condition: service_healthy
