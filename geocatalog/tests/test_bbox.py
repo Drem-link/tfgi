@@ -1,11 +1,15 @@
 import pytest
 from fastapi import HTTPException
 
-from app.main import parse_bbox
+from app.main import livez, parse_bbox
 
 
 def test_parse_bbox():
     assert parse_bbox("30,50,40,60") == (30.0, 50.0, 40.0, 60.0)
+
+
+def test_livez_does_not_require_database():
+    assert livez() == {"status": "ok"}
 
 
 @pytest.mark.parametrize(

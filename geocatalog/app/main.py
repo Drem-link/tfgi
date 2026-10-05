@@ -28,6 +28,7 @@ def get_connection():
         dbname=os.environ["PGDATABASE"],
         user=os.environ["PGUSER"],
         password=os.environ["PGPASSWORD"],
+        connect_timeout=5,
         row_factory=dict_row,
     )
 
@@ -66,6 +67,11 @@ def healthz():
             connection.execute("SELECT PostGIS_Version()")
     except psycopg.Error as exc:
         raise HTTPException(status_code=503, detail="database unavailable") from exc
+    return {"status": "ok"}
+
+
+@app.get("/livez")
+def livez():
     return {"status": "ok"}
 
 
