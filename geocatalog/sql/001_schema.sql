@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS features (
     kind TEXT NOT NULL CHECK (kind IN ('well', 'area', 'site', 'other')),
     geom geometry(Geometry, 4326) NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    UNIQUE (name),
     CHECK (
         (kind = 'well' AND GeometryType(geom) = 'POINT') OR
         (kind = 'area' AND GeometryType(geom) IN ('POLYGON', 'MULTIPOLYGON')) OR

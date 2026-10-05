@@ -12,7 +12,7 @@ printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .env
 docker compose up --build -d
 ```
 
-Откройте <http://127.0.0.1:8080>. Пока в базе нет записей, карта будет пустой. Проверка здоровья API: <http://127.0.0.1:8080/healthz>.
+Откройте <http://127.0.0.1:8080>. В пустую базу при первом запуске автоматически добавляются два явно помеченных синтетических объекта и демонстрационные документы. Проверка здоровья API: <http://127.0.0.1:8080/healthz>.
 
 ## Модель данных и API
 
@@ -43,9 +43,10 @@ install -d -o 999 -g 999 -m 700 /var/lib/containers/k8s-app-data/postgis
 restorecon -Rv /var/lib/containers/k8s-app-data/postgis
 kubectl apply -f k8s/namespace.yaml
 kubectl -n geocatalog create secret generic geocatalog-db \
-  --from-literal=PGPASSWORD="$(openssl rand -hex 32)"
+  --from-file=PGPASSWORD=/dev/stdin < <(openssl rand -hex 32)
 kubectl -n geocatalog create configmap geocatalog-schema \
-  --from-file=001_schema.sql=sql/001_schema.sql
+  --from-file=001_schema.sql=sql/001_schema.sql \
+  --from-file=002_demo_data.sql=sql/002_demo_data.sql
 kubectl apply -f k8s/postgis.yaml
 ```
 
@@ -59,7 +60,18 @@ kubectl apply -f k8s/app.yaml
 kubectl get pvc,pods -n geocatalog -w
 ```
 
-Не удаляйте PVC/PV или каталог данных для «переустановки»: PV настроен с `Retain`, но удаление каталога уничтожит базу. Приложение без логина — пока используйте только контролируемый `kubectl port-forward` на loopback; не открывайте его на LAN, NodePort или через Ingress до добавления авторизации и TLS. Для реальной эксплуатации также нужны миграции, резервные копии и проверка восстановления.
+Проверьте завершение PostGIS и доступность API перед использованием:
+
+```bash
+kubectl rollout status -n geocatalog deployment/geocatalog-postgis --timeout=180s
+kubectl apply -f k8s/app.yaml
+kubectl rollout status -n geocatalog deployment/geocatalog --timeout=180s
+kubectl -n geocatalog port-forward --address 127.0.0.1 svc/geocatalog 8080:8080
+```
+
+В другом терминале проверьте `http://127.0.0.1:8080/healthz` и `http://127.0.0.1:8080/api/features`. Локальный `kubectl port-forward` доступен только на самом сервере; до авторизации и TLS не публикуйте приложение в LAN или Интернет.
+
+Не удаляйте PVC/PV или каталог данных для «переустановки»: PV настроен с `Retain`, но удаление каталога уничтожит базу. Demo SQL запускается только при первой инициализации пустого Postgres data directory. Для последующих изменений используйте миграции, не запускайте init SQL повторно вручную без проверки. Для реальной эксплуатации нужны авторизация, TLS, резервные копии и проверка восстановления.
 
 ## Проверки
 
