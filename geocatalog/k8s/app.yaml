@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: geocatalog
+  namespace: geocatalog
+spec:
+  type: ClusterIP
+  selector:
+    app: geocatalog
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geocatalog
+  namespace: geocatalog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: geocatalog
+  template:
+    metadata:
+      labels:
+        app: geocatalog
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: geocatalog:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PGHOST
+              value: geocatalog-postgis
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: geocatalog
+            - name: PGUSER
+              value: geocatalog
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: geocatalog-db
+                  key: PGPASSWORD
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
