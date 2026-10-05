@@ -1,0 +1,54 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, sans-serif;
+  color: #17232c;
+  background: #f4f6f5;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 28px;
+  background: #173b32;
+  color: #fff;
+}
+h1 { margin: 0; font-size: 1.35rem; }
+header p { margin: 5px 0 0; color: #d3e0d9; }
+form { display: flex; flex-wrap: wrap; gap: 8px; }
+input, button {
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid #c7d1cc;
+  border-radius: 7px;
+  font: inherit;
+}
+input { width: 170px; background: #fff; }
+input[type="number"] { width: 105px; }
+button { border: 0; background: #d49838; color: #17232c; font-weight: 700; cursor: pointer; }
+button.secondary { background: #e1e9e4; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 390px; height: calc(100vh - 100px); }
+#map { min-height: 420px; }
+aside { overflow: auto; padding: 18px; border-left: 1px solid #d9e0dc; background: #fff; }
+.results-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+h2 { margin: 0; font-size: 1.08rem; }
+#result-count { color: #617168; font-size: .9rem; }
+#message { color: #6a5540; }
+.feature-card { padding: 14px 0; border-bottom: 1px solid #e5e9e6; }
+.feature-card h3 { margin: 0 0 5px; font-size: 1rem; }
+.feature-card p { margin: 4px 0; color: #526159; font-size: .92rem; }
+.feature-card button { margin-top: 8px; padding: 6px 9px; min-height: 34px; }
+.doc { margin-top: 10px; padding: 10px; background: #f2f5f3; border-radius: 6px; }
+.doc strong { display: block; margin-bottom: 4px; }
+.doc p { margin: 3px 0; }
+.map-popup { max-height: 330px; min-width: 220px; overflow: auto; }
+.map-popup p { margin: 4px 0; color: #526159; }
+.map-popup section { padding: 8px 0; border-top: 1px solid #e5e9e6; }
+@media (max-width: 850px) {
+  header { align-items: stretch; flex-direction: column; padding: 16px; }
+  main { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; height: auto; }
+  aside { border-left: 0; border-top: 1px solid #d9e0dc; }
+}

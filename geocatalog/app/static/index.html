@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Геологический каталог</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Геологический каталог</h1>
+      <p>Поиск материалов библиотеки по карте и метаданным</p>
+    </div>
+    <form id="search-form">
+      <input name="q" placeholder="Название, тема, описание">
+      <input name="region" placeholder="Регион">
+      <input name="year_from" type="number" min="1500" max="2200" placeholder="Год от">
+      <input name="year_to" type="number" min="1500" max="2200" placeholder="Год до">
+      <button type="submit">Найти</button>
+      <button type="reset" class="secondary">Сбросить</button>
+    </form>
+  </header>
+  <main>
+    <section id="map" aria-label="Карта геологических объектов"></section>
+    <aside>
+      <div class="results-heading">
+        <h2>Объекты и документы</h2>
+        <span id="result-count">Загрузка…</span>
+      </div>
+      <p id="message" role="status"></p>
+      <div id="results"></div>
+    </aside>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
