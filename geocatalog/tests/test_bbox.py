@@ -2,6 +2,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app import auth_cli
 from app.main import app, livez, parse_bbox
 
 
@@ -82,6 +83,34 @@ def test_login_refuses_plain_http():
             data={"username": "catalog-admin", "password": "anything"},
         )
     assert response.status_code == 426
+
+
+def test_auth_cli_accepts_eight_character_password(tmp_path, monkeypatch):
+    import sys
+
+    prompts = iter(["admin", "12345678", "12345678"])
+    monkeypatch.setattr("builtins.input", lambda _: next(prompts))
+    monkeypatch.setattr(auth_cli.getpass, "getpass", lambda _: next(prompts))
+    monkeypatch.setattr(sys, "argv", ["auth_cli", "--output-dir", str(tmp_path / "auth")])
+
+    auth_cli.main()
+
+    from argon2 import PasswordHasher
+
+    password_hash = (tmp_path / "auth" / "AUTH_PASSWORD_HASH").read_text().strip()
+    assert PasswordHasher().verify(password_hash, "12345678")
+
+
+def test_auth_cli_rejects_password_shorter_than_eight(tmp_path, monkeypatch):
+    import sys
+
+    prompts = iter(["admin", "1234567", "1234567"])
+    monkeypatch.setattr("builtins.input", lambda _: next(prompts))
+    monkeypatch.setattr(auth_cli.getpass, "getpass", lambda _: next(prompts))
+    monkeypatch.setattr(sys, "argv", ["auth_cli", "--output-dir", str(tmp_path / "auth")])
+
+    with pytest.raises(SystemExit):
+        auth_cli.main()
 
 
 @pytest.mark.parametrize(
