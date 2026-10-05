@@ -26,9 +26,9 @@ login_failure_limit = 8
 
 
 def auth_config() -> tuple[str, str, URLSafeTimedSerializer]:
-    username = os.environ.get("AUTH_USERNAME", "")
-    password_hash = os.environ.get("AUTH_PASSWORD_HASH", "")
-    session_secret = os.environ.get("SESSION_SECRET", "")
+    username = os.environ.get("AUTH_USERNAME", "").strip()
+    password_hash = os.environ.get("AUTH_PASSWORD_HASH", "").strip()
+    session_secret = os.environ.get("SESSION_SECRET", "").strip()
     if not username or not password_hash or len(session_secret) < 32:
         raise RuntimeError("AUTH_USERNAME, AUTH_PASSWORD_HASH and a 32-character SESSION_SECRET are required")
     return username, password_hash, URLSafeTimedSerializer(session_secret, salt="geocatalog-session-v1")

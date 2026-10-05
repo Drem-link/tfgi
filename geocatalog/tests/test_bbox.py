@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -74,6 +76,21 @@ def test_login_accepts_unicode_credentials(monkeypatch):
         )
         assert response.status_code == 303
         assert client.get("/", follow_redirects=False).status_code == 200
+
+
+def test_login_accepts_secret_values_with_trailing_newlines(auth_client, monkeypatch):
+    monkeypatch.setenv("AUTH_USERNAME", "catalog-admin\n")
+    monkeypatch.setenv("AUTH_PASSWORD_HASH", os.environ["AUTH_PASSWORD_HASH"] + "\n")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret-that-is-at-least-32-bytes\n")
+
+    response = auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
 
 
 def test_login_refuses_plain_http():
