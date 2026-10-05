@@ -1,5 +1,7 @@
 import os
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -144,6 +146,16 @@ def test_parse_bbox():
 
 def test_livez_does_not_require_database():
     assert livez() == {"status": "ok"}
+
+
+def test_offline_country_boundaries_are_bundled():
+    geography = Path(__file__).parents[1] / "app/static/ne_110m_admin_0_countries.geojson"
+    data = json.loads(geography.read_text(encoding="utf-8"))
+
+    assert data["type"] == "FeatureCollection"
+    assert len(data["features"]) >= 170
+    assert all(feature["geometry"]["type"] in {"Polygon", "MultiPolygon"} for feature in data["features"])
+    assert all(feature["properties"].get("ADMIN") for feature in data["features"])
 
 
 def test_bootstrap_admin_migration_trims_secret_files(monkeypatch):

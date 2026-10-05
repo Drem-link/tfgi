@@ -15,6 +15,7 @@ let didDrag = false;
 let lastFrame = performance.now();
 let hoveredFeature = null;
 let globeGeometry = null;
+let countries = [];
 
 function text(tag, value, className) {
   const element = document.createElement(tag);
@@ -125,6 +126,119 @@ function drawGrid(geometry) {
   context.shadowBlur = 0;
 }
 
+function countryPolygons(geometry) {
+  if (geometry.type === "Polygon") return [geometry.coordinates];
+  if (geometry.type === "MultiPolygon") return geometry.coordinates;
+  return [];
+}
+
+function interpolateCoordinate(start, end, fraction) {
+  const deltaLongitude = ((end[0] - start[0] + 540) % 360) - 180;
+  let longitude = start[0] + deltaLongitude * fraction;
+  if (longitude > 180) longitude -= 360;
+  if (longitude < -180) longitude += 360;
+  return [longitude, start[1] + (end[1] - start[1]) * fraction];
+}
+
+function horizonPoint(start, end, geometry) {
+  let visibleFraction = 0;
+  let hiddenFraction = 1;
+  const startVisible = project(start, geometry).z > 0;
+  for (let step = 0; step < 14; step += 1) {
+    const middle = (visibleFraction + hiddenFraction) / 2;
+    const point = project(interpolateCoordinate(start, end, middle), geometry);
+    if ((point.z > 0) === startVisible) visibleFraction = middle;
+    else hiddenFraction = middle;
+  }
+  return project(interpolateCoordinate(start, end, (visibleFraction + hiddenFraction) / 2), geometry);
+}
+
+function projectCountryRing(ring, geometry) {
+  const chains = [];
+  let chain = [];
+  const append = (coordinates) => {
+    const point = project(coordinates, geometry);
+    if (point.z <= 0) return;
+    chain.push([point.x, point.y]);
+  };
+  const finish = () => {
+    if (chain.length > 1) chains.push(chain);
+    chain = [];
+  };
+
+  for (let index = 0; index < ring.length - 1; index += 1) {
+    const start = ring[index];
+    const end = ring[index + 1];
+    const deltaLongitude = ((end[0] - start[0] + 540) % 360) - 180;
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(deltaLongitude), Math.abs(end[1] - start[1])) / 3));
+    let previous = start;
+    let previousVisible = project(previous, geometry).z > 0;
+    if (previousVisible && chain.length === 0) append(previous);
+
+    for (let step = 1; step <= steps; step += 1) {
+      const current = interpolateCoordinate(start, end, step / steps);
+      const currentVisible = project(current, geometry).z > 0;
+      if (previousVisible && currentVisible) {
+        append(current);
+      } else if (previousVisible && !currentVisible) {
+        const edge = horizonPoint(previous, current, geometry);
+        chain.push([edge.x, edge.y]);
+        finish();
+      } else if (!previousVisible && currentVisible) {
+        const edge = horizonPoint(previous, current, geometry);
+        chain.push([edge.x, edge.y]);
+        append(current);
+      }
+      previous = current;
+      previousVisible = currentVisible;
+    }
+  }
+  finish();
+  return chains;
+}
+
+function drawCountryPolygon(polygon, geometry) {
+  const visibleRings = polygon.map((ring) => projectCountryRing(ring, geometry));
+  context.beginPath();
+  for (const chains of visibleRings) {
+    for (const chain of chains) {
+      context.moveTo(chain[0][0], chain[0][1]);
+      for (let index = 1; index < chain.length; index += 1) {
+        context.lineTo(chain[index][0], chain[index][1]);
+      }
+      context.closePath();
+    }
+  }
+  context.fillStyle = "#263653";
+  context.fill("evenodd");
+
+  context.beginPath();
+  for (const chains of visibleRings) {
+    for (const chain of chains) {
+      context.moveTo(chain[0][0], chain[0][1]);
+      for (let index = 1; index < chain.length; index += 1) {
+        context.lineTo(chain[index][0], chain[index][1]);
+      }
+    }
+  }
+  context.strokeStyle = "rgba(177, 194, 219, .48)";
+  context.lineWidth = 0.65;
+  context.stroke();
+}
+
+function drawCountries(geometry) {
+  context.save();
+  context.beginPath();
+  context.arc(geometry.x, geometry.y, geometry.radius, 0, Math.PI * 2);
+  context.clip();
+  for (const country of countries) {
+    for (const polygon of countryPolygons(country.geometry)) {
+      drawCountryPolygon(polygon, geometry);
+    }
+  }
+  context.restore();
+}
+
 function traceGridLine(geometry, coordinateAt, start, end, step) {
   context.beginPath();
   let drawing = false;
@@ -211,6 +325,7 @@ function drawGlobe(now) {
   const radius = Math.max(80, Math.min(width * 0.43, height * 0.43) * zoom);
   globeGeometry = { x: width / 2, y: height / 2, radius };
   drawGrid(globeGeometry);
+  drawCountries(globeGeometry);
   for (const feature of features) drawFeatureGeometry(feature, globeGeometry);
   window.requestAnimationFrame(drawGlobe);
 }
@@ -355,6 +470,18 @@ document.querySelector("#search-form").addEventListener("submit", (event) => {
 });
 document.querySelector("#search-form").addEventListener("reset", () => setTimeout(search, 0));
 document.querySelector("#logout").addEventListener("click", () => document.querySelector("#logout-form").requestSubmit());
+fetch("/static/ne_110m_admin_0_countries.geojson")
+  .then((response) => {
+    if (!response.ok) throw new Error(`Не удалось загрузить офлайн-карту стран (${response.status})`);
+    return response.json();
+  })
+  .then((data) => {
+    if (!Array.isArray(data.features)) throw new Error("Файл офлайн-карты стран имеет неверный формат");
+    countries = data.features;
+  })
+  .catch((error) => {
+    message.textContent = error.message;
+  });
 fetch("/api/session", { credentials: "same-origin" })
   .then((response) => {
     if (response.status === 401) {
