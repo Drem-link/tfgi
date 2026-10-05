@@ -34,6 +34,7 @@ main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(370px, .75
   font-size: .67rem;
   letter-spacing: .09em;
 }
+.globe-readout { color: #9790e6; font-size: .64rem; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
 .hint { color: #777e9e; font-size: .64rem; }
 .globe-stage {
   position: relative;
@@ -78,6 +79,24 @@ main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(370px, .75
   pointer-events: none;
   transform: translateX(-50%);
 }
+.globe-controls {
+  position: absolute;
+  z-index: 2;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 6px;
+}
+.globe-controls button {
+  min-width: 38px;
+  min-height: 34px;
+  padding: 6px 9px;
+  border-color: #41496a;
+  background: rgba(10, 15, 35, .92);
+  color: #d1cfff;
+}
+.globe-controls button:hover { border-color: #9790e6; background: #171d39; }
+.globe-controls #globe-reset { font-size: .62rem; letter-spacing: .08em; }
 .globe-selection {
   position: absolute;
   z-index: 3;
@@ -132,7 +151,11 @@ button.secondary, button.ghost-button { border-color: #41496a; background: trans
 button.ghost-button { min-height: 34px; padding: 7px 10px; }
 .header-link { color: #c2c1dd; font-size: .75rem; }
 .feature-card { padding: 15px 0; border-bottom: 1px solid #2c3452; cursor: pointer; }
-.feature-card:focus, .feature-card:hover { outline: none; background: rgba(160, 155, 220, .07); }
+.feature-card:focus, .feature-card:hover, .feature-card.selected {
+  outline: none;
+  background: rgba(151, 144, 230, .1);
+  box-shadow: inset 2px 0 #9790e6;
+}
 .feature-card h3 { margin: 0 0 6px; color: #f6d6bd; font-size: .84rem; line-height: 1.45; }
 .feature-card p { margin: 4px 0; color: #9ea4bf; font-size: .71rem; line-height: 1.5; overflow-wrap: anywhere; }
 .doc { margin-top: 10px; padding: 10px; border: 1px solid #252d49; background: #0d1429; }

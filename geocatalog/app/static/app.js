@@ -14,6 +14,7 @@ let lastPointer = null;
 let dragOrigin = null;
 let didDrag = false;
 let lastFrame = performance.now();
+let lastReadout = 0;
 let hoveredFeature = null;
 let globeGeometry = null;
 let countries = [];
@@ -51,7 +52,11 @@ function renderFeature(feature, target = results) {
   const card = text("article", null, "feature-card");
   card.tabIndex = 0;
   card.setAttribute("role", "button");
+  card.dataset.featureId = feature.id;
   card.setAttribute("aria-label", `${props.name}, показать на глобусе`);
+  const selected = feature.id === selectedFeature?.id;
+  card.setAttribute("aria-pressed", String(selected));
+  if (selected) card.classList.add("selected");
   card.append(text("h3", props.name));
   card.append(text("p", `${kindLabel(props.kind)} · документов: ${props.documents.length}`));
   if (props.metadata && Object.keys(props.metadata).length) {
@@ -318,6 +323,14 @@ function drawFeatureGeometry(feature, geometry) {
       const point = project(coordinates, geometry);
       if (point.z <= 0) continue;
       const radius = feature === hoveredFeature ? 7 : 4.5;
+      if (feature === selectedFeature) {
+        const pulse = 13 + Math.sin(performance.now() / 240) * 2;
+        context.beginPath();
+        context.arc(point.x, point.y, pulse, 0, Math.PI * 2);
+        context.strokeStyle = "rgba(242, 197, 165, .8)";
+        context.lineWidth = 1.5;
+        context.stroke();
+      }
       context.beginPath();
       context.arc(point.x, point.y, radius, 0, Math.PI * 2);
       context.fillStyle = "#f2c5a5";
@@ -348,6 +361,11 @@ function drawGlobe(now) {
   drawGrid(globeGeometry);
   drawCountries(globeGeometry);
   for (const feature of features) drawFeatureGeometry(feature, globeGeometry);
+  if (now - lastReadout > 250) {
+    document.querySelector("#globe-readout").textContent =
+      `ШИР ${rotation.latitude.toFixed(1)}° · ДОЛГ ${rotation.longitude.toFixed(1)}° · МАСШТАБ ${zoom.toFixed(1)}×`;
+    lastReadout = now;
+  }
   window.requestAnimationFrame(drawGlobe);
 }
 
@@ -359,7 +377,12 @@ function focusFeature(feature) {
   targetZoom = Math.max(targetZoom, 1.12);
   hoveredFeature = feature;
   renderSelection(feature);
-  const card = [...results.children].find((item) => item.querySelector("h3")?.textContent === feature.properties.name);
+  for (const card of results.children) {
+    const selected = Number(card.dataset.featureId) === Number(feature.id);
+    card.classList.toggle("selected", selected);
+    card.setAttribute("aria-pressed", String(selected));
+  }
+  const card = [...results.children].find((item) => Number(item.dataset.featureId) === Number(feature.id));
   card?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -384,13 +407,19 @@ function coordinatesOf(feature) {
 
 function featureAt(x, y) {
   if (!globeGeometry) return null;
+  let nearest = null;
+  let nearestDistance = Infinity;
   for (const feature of features) {
     for (const coordinates of coordinatesOf(feature)) {
       const point = project(coordinates, globeGeometry);
-      if (point.z > 0 && Math.hypot(point.x - x, point.y - y) < 14) return feature;
+      const distance = Math.hypot(point.x - x, point.y - y);
+      if (point.z > 0 && distance < 20 && distance < nearestDistance) {
+        nearest = feature;
+        nearestDistance = distance;
+      }
     }
   }
-  return null;
+  return nearest;
 }
 
 function updateTooltip(feature) {
@@ -448,6 +477,23 @@ canvas.addEventListener("wheel", (event) => {
   event.preventDefault();
   targetZoom = Math.max(0.72, Math.min(1.65, targetZoom - Math.sign(event.deltaY) * 0.06));
 }, { passive: false });
+document.querySelector("#zoom-in").addEventListener("click", () => {
+  targetZoom = Math.min(1.65, targetZoom + 0.12);
+});
+document.querySelector("#zoom-out").addEventListener("click", () => {
+  targetZoom = Math.max(0.72, targetZoom - 0.12);
+});
+document.querySelector("#globe-reset").addEventListener("click", () => {
+  selectedFeature = null;
+  hoveredFeature = null;
+  selectionPanel.hidden = true;
+  targetZoom = 1;
+  rotation = { longitude: 38, latitude: 54 };
+  for (const card of results.children) {
+    card.classList.remove("selected");
+    card.setAttribute("aria-pressed", "false");
+  }
+});
 canvas.addEventListener("pointerleave", () => {
   if (!dragging) {
     hoveredFeature = null;
