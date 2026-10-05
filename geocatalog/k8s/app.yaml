@@ -35,8 +35,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: app
-          image: geocatalog:0.1.0
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/drem-link/tfgi-geocatalog:feature-geological-map-mvp
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080

@@ -43,19 +43,22 @@ install -d -o 999 -g 999 -m 700 /var/lib/containers/k8s-app-data/postgis
 restorecon -Rv /var/lib/containers/k8s-app-data/postgis
 kubectl apply -f k8s/namespace.yaml
 kubectl -n geocatalog create secret generic geocatalog-db \
-  --from-file=PGPASSWORD=/dev/stdin < <(openssl rand -hex 32)
+  --from-literal=PGPASSWORD="$(openssl rand -hex 32)"
 kubectl -n geocatalog create configmap geocatalog-schema \
   --from-file=001_schema.sql=sql/001_schema.sql \
   --from-file=002_demo_data.sql=sql/002_demo_data.sql
 kubectl apply -f k8s/postgis.yaml
 ```
 
-Соберите образ на сервере, импортируйте его в containerd (если `podman` доступен), затем примените веб-приложение:
+Образ собирается GitHub Actions после push в ветку `feature/geological-map-mvp`; сборка и тесты не требуют Podman на сервере. Дождитесь успешного workflow **Geological catalog image**. Если GitHub создал GHCR package как private, переключите package visibility на public перед pull на сервере (в репозитории нет секретных данных, но приложение всё равно пока без аутентификации).
 
 ```bash
-podman build -t geocatalog:0.1.0 .
-podman save --format oci-archive -o /tmp/geocatalog-0.1.0.tar geocatalog:0.1.0
-ctr -n k8s.io images import /tmp/geocatalog-0.1.0.tar
+ctr -n k8s.io images pull ghcr.io/drem-link/tfgi-geocatalog:feature-geological-map-mvp
+```
+
+Дождитесь успешного pull образа, затем примените веб-приложение:
+
+```bash
 kubectl apply -f k8s/app.yaml
 kubectl get pvc,pods -n geocatalog -w
 ```
@@ -64,7 +67,6 @@ kubectl get pvc,pods -n geocatalog -w
 
 ```bash
 kubectl rollout status -n geocatalog deployment/geocatalog-postgis --timeout=180s
-kubectl apply -f k8s/app.yaml
 kubectl rollout status -n geocatalog deployment/geocatalog --timeout=180s
 kubectl -n geocatalog port-forward --address 127.0.0.1 svc/geocatalog 8080:8080
 ```
