@@ -166,7 +166,7 @@ def test_magadan_demo_migration_adds_two_document_linked_points():
     assert "DEMO-MAGADAN-0001" in sql
     assert "DEMO-MAGADAN-0002" in sql
     assert "150.80, 59.56" in sql
-    assert "151.45, 60.00" in sql
+    assert "153.20, 60.80" in sql
     assert "ON CONFLICT (inventory_number) DO UPDATE" in sql
     assert "ON CONFLICT (name) DO UPDATE" in sql
     assert "ON CONFLICT DO NOTHING" in sql

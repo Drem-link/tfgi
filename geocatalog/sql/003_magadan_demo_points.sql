@@ -41,7 +41,7 @@ VALUES
     (
         '[DEMO] Магаданская область — тестовая точка B',
         'well',
-        ST_SetSRID(ST_MakePoint(151.45, 60.00), 4326),
+        ST_SetSRID(ST_MakePoint(153.20, 60.80), 4326),
         '{"synthetic": true, "warning": "Demo-only location in Magadan Oblast; not a real borehole"}'::jsonb
     )
 ON CONFLICT (name) DO UPDATE SET

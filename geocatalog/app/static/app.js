@@ -356,7 +356,7 @@ function focusFeature(feature) {
   if (!coords) return;
   rotation.longitude = coords[0];
   rotation.latitude = coords[1];
-  targetZoom = Math.max(targetZoom, 1.38);
+  targetZoom = Math.max(targetZoom, 1.12);
   hoveredFeature = feature;
   renderSelection(feature);
   const card = [...results.children].find((item) => item.querySelector("h3")?.textContent === feature.properties.name);
