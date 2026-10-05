@@ -105,6 +105,7 @@ input:focus { border-color: #aaa2eb; outline: none; }
 button { border-color: #f2c5a5; background: #f2c5a5; color: #101329; font-size: .75rem; font-weight: 700; cursor: pointer; }
 button.secondary, button.ghost-button { border-color: #41496a; background: transparent; color: #c2c1dd; }
 button.ghost-button { min-height: 34px; padding: 7px 10px; }
+.header-link { color: #c2c1dd; font-size: .75rem; }
 .feature-card { padding: 15px 0; border-bottom: 1px solid #2c3452; cursor: pointer; }
 .feature-card:focus, .feature-card:hover { outline: none; background: rgba(160, 155, 220, .07); }
 .feature-card h3 { margin: 0 0 6px; color: #f6d6bd; font-size: .84rem; line-height: 1.45; }

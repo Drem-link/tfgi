@@ -355,6 +355,21 @@ document.querySelector("#search-form").addEventListener("submit", (event) => {
 });
 document.querySelector("#search-form").addEventListener("reset", () => setTimeout(search, 0));
 document.querySelector("#logout").addEventListener("click", () => document.querySelector("#logout-form").requestSubmit());
+fetch("/api/session", { credentials: "same-origin" })
+  .then((response) => {
+    if (response.status === 401) {
+      location.assign("/login");
+      return null;
+    }
+    if (!response.ok) throw new Error("Не удалось получить профиль пользователя");
+    return response.json();
+  })
+  .then((session) => {
+    if (session?.role === "admin") document.querySelector("#user-admin-link").hidden = false;
+  })
+  .catch((error) => {
+    message.textContent = error.message;
+  });
 resizeCanvas();
 window.requestAnimationFrame(drawGlobe);
 search();

@@ -1,23 +1,22 @@
 import json
 import math
 import os
-import secrets
 import time
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from typing import Annotated
 from urllib.parse import parse_qs, urlsplit
 
 import psycopg
+from psycopg.errors import UniqueViolation
+from psycopg.rows import dict_row
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from psycopg.rows import dict_row
+from pydantic import BaseModel, Field, model_validator
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-app = FastAPI(title="Geological Library Map", version="0.1.0")
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
 password_hasher = PasswordHasher()
 login_failures: dict[str, list[float]] = {}
 session_max_age = 8 * 60 * 60
@@ -34,18 +33,66 @@ def auth_config() -> tuple[str, str, URLSafeTimedSerializer]:
     return username, password_hash, URLSafeTimedSerializer(session_secret, salt="geocatalog-session-v1")
 
 
-def authenticated_user(request: Request) -> str | None:
+def ensure_users_table() -> None:
+    username, password_hash, _ = auth_config()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS geocatalog_users (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE
+                    CHECK (username ~ '^[A-Za-z0-9._@-]{1,128}$'),
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                token_version INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO geocatalog_users (username, password_hash, role)
+            VALUES (%s, %s, 'admin')
+            ON CONFLICT (username) DO NOTHING
+            """,
+            (username, password_hash),
+        )
+
+
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    ensure_users_table()
+    yield
+
+
+app = FastAPI(title="Geological Library Map", version="0.1.0", lifespan=app_lifespan)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+
+def authenticated_user(request: Request) -> dict | None:
     try:
-        expected_username, _, serializer = auth_config()
-        username = serializer.loads(
+        _, _, serializer = auth_config()
+        session = serializer.loads(
             request.cookies.get("geocatalog_session", ""),
             max_age=session_max_age,
         )
     except (RuntimeError, BadSignature, SignatureExpired, TypeError):
         return None
-    if not isinstance(username, str):
+    if not isinstance(session, dict) or not isinstance(session.get("id"), int):
         return None
-    return username if secrets.compare_digest(username.encode(), expected_username.encode()) else None
+    with closing(get_connection()) as connection:
+        user = connection.execute(
+            """
+            SELECT id, username, role
+            FROM geocatalog_users
+            WHERE id = %s AND token_version = %s AND is_active
+            """,
+            (session["id"], session.get("version")),
+        ).fetchone()
+    if user is None:
+        return None
+    return user
 
 
 def is_public_path(path: str) -> bool:
@@ -65,7 +112,10 @@ async def require_login(request: Request, call_next):
                 response = RedirectResponse("/login", status_code=303)
         else:
             request.state.user = user
-            response = await call_next(request)
+            if request.url.path.startswith("/admin") and user["role"] != "admin":
+                response = RedirectResponse("/", status_code=303)
+            else:
+                response = await call_next(request)
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -98,6 +148,31 @@ def get_connection():
     )
 
 
+class UserCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._@-]+$")
+    password: str = Field(min_length=8, max_length=1024)
+    role: str = Field(pattern=r"^(admin|viewer)$")
+
+
+class UserUpdate(BaseModel):
+    role: str | None = Field(default=None, pattern=r"^(admin|viewer)$")
+    active: bool | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=1024)
+
+    @model_validator(mode="after")
+    def require_update(self):
+        if self.role is None and self.active is None and self.password is None:
+            raise ValueError("at least one of role, active, or password is required")
+        return self
+
+
+def require_admin(request: Request) -> dict:
+    user = getattr(request.state, "user", None)
+    if user is None or user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="administrator permission required")
+    return user
+
+
 def parse_bbox(bbox: str | None) -> tuple[float, float, float, float] | None:
     if bbox is None:
         return None
@@ -128,6 +203,100 @@ def index():
 @app.get("/login")
 def login_page():
     return FileResponse("app/static/login.html")
+
+
+@app.get("/admin/users")
+def users_page(request: Request):
+    require_admin(request)
+    return FileResponse("app/static/users.html")
+
+
+@app.get("/api/session")
+def get_session(request: Request):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    return {"username": user["username"], "role": user["role"]}
+
+
+@app.get("/api/admin/users")
+def list_users(request: Request):
+    require_admin(request)
+    with closing(get_connection()) as connection:
+        users = connection.execute(
+            """
+            SELECT id, username, role, is_active, created_at
+            FROM geocatalog_users
+            ORDER BY username
+            """
+        ).fetchall()
+    return {"users": users}
+
+
+@app.post("/api/admin/users", status_code=201)
+def create_user(user: UserCreate, request: Request):
+    require_admin(request)
+    try:
+        with get_connection() as connection:
+            created = connection.execute(
+                """
+                INSERT INTO geocatalog_users (username, password_hash, role)
+                VALUES (%s, %s, %s)
+                RETURNING id, username, role, is_active, created_at
+                """,
+                (user.username, password_hasher.hash(user.password), user.role),
+            ).fetchone()
+    except UniqueViolation as exc:
+        raise HTTPException(status_code=409, detail="username already exists") from exc
+    return created
+
+
+@app.patch("/api/admin/users/{user_id}")
+def update_user(user_id: int, update: UserUpdate, request: Request):
+    require_admin(request)
+    changes = update.model_dump(exclude_unset=True)
+    with get_connection() as connection:
+        connection.execute("SELECT pg_advisory_xact_lock(73412905)")
+        current = connection.execute(
+            "SELECT id, username, role, is_active FROM geocatalog_users WHERE id = %s FOR UPDATE",
+            (user_id,),
+        ).fetchone()
+        if current is None:
+            raise HTTPException(status_code=404, detail="user not found")
+
+        next_role = changes.get("role", current["role"])
+        next_active = changes.get("active", current["is_active"])
+        if current["role"] == "admin" and current["is_active"] and (
+            next_role != "admin" or not next_active
+        ):
+            admin_count = connection.execute(
+                "SELECT count(*) AS count FROM geocatalog_users WHERE role = 'admin' AND is_active"
+            ).fetchone()["count"]
+            if admin_count <= 1:
+                raise HTTPException(status_code=409, detail="cannot disable or demote the last active administrator")
+
+        assignments = []
+        values = []
+        if "role" in changes:
+            assignments.append("role = %s")
+            values.append(changes["role"])
+        if "active" in changes:
+            assignments.append("is_active = %s")
+            values.append(changes["active"])
+        if "password" in changes:
+            assignments.extend(("password_hash = %s", "token_version = token_version + 1"))
+            values.append(password_hasher.hash(changes["password"]))
+        values.append(user_id)
+        updated = connection.execute(
+            f"""
+            UPDATE geocatalog_users
+            SET {", ".join(assignments)}
+            WHERE id = %s
+            RETURNING id, username, role, is_active, created_at
+            """,
+            values,
+        ).fetchone()
+    return updated
 
 
 @app.post("/auth/login")
@@ -164,15 +333,23 @@ async def login(request: Request):
         raise HTTPException(status_code=429, detail="too many login attempts; try again later")
 
     try:
-        expected_username, password_hash, serializer = auth_config()
-    except RuntimeError as exc:
+        _, _, serializer = auth_config()
+        with closing(get_connection()) as connection:
+            user = connection.execute(
+                """
+                SELECT id, username, password_hash, role, token_version
+                FROM geocatalog_users
+                WHERE username = %s AND is_active
+                """,
+                (username,),
+            ).fetchone()
+    except (RuntimeError, psycopg.Error) as exc:
         raise HTTPException(status_code=503, detail="authentication is not configured") from exc
     try:
-        password_ok = password_hasher.verify(password_hash, password)
+        password_ok = user is not None and password_hasher.verify(user["password_hash"], password)
     except (VerifyMismatchError, InvalidHashError, VerificationError):
         password_ok = False
-    username_ok = secrets.compare_digest(username.encode(), expected_username.encode())
-    if not (username_ok and password_ok):
+    if not password_ok:
         login_failures[client].append(now)
         response = RedirectResponse("/login?error=invalid", status_code=303)
         response.headers["Cache-Control"] = "no-store"
@@ -182,7 +359,7 @@ async def login(request: Request):
     response = RedirectResponse("/", status_code=303)
     response.set_cookie(
         "geocatalog_session",
-        serializer.dumps(expected_username),
+        serializer.dumps({"id": user["id"], "version": user["token_version"]}),
         max_age=session_max_age,
         httponly=True,
         secure=True,

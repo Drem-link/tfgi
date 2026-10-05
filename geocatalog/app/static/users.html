@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Пользователи — Геологический каталог</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/users.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <a class="brand-icon" href="/" aria-label="В каталог">◉</a>
+      <div>
+        <h1>Управление пользователями</h1>
+        <p>СОЗДАНИЕ УЧЁТНЫХ ЗАПИСЕЙ И НАЗНАЧЕНИЕ ПРАВ</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <a class="header-link" href="/">← В каталог</a>
+      <form method="post" action="/auth/logout"><button class="ghost-button" type="submit">Выйти</button></form>
+    </div>
+  </header>
+  <main class="users-layout">
+    <section class="users-panel">
+      <p class="eyebrow">НОВАЯ УЧЁТНАЯ ЗАПИСЬ</p>
+      <h2>Добавить коллегу</h2>
+      <p class="help">Пароль сообщи коллеге лично. Его можно сбросить здесь, но посмотреть нельзя.</p>
+      <form id="create-user-form" class="user-form">
+        <label for="username">Логин</label>
+        <input id="username" name="username" required minlength="1" maxlength="128"
+               pattern="[A-Za-z0-9._@-]+" autocomplete="off">
+        <label for="password">Временный пароль (минимум 8 символов)</label>
+        <input id="password" name="password" type="password" required minlength="8" maxlength="1024"
+               autocomplete="new-password">
+        <label for="role">Права</label>
+        <select id="role" name="role">
+          <option value="viewer">Просмотр каталога</option>
+          <option value="admin">Администратор — управление пользователями</option>
+        </select>
+        <button type="submit">Создать пользователя</button>
+      </form>
+    </section>
+    <section class="users-panel">
+      <div class="users-title">
+        <div><p class="eyebrow">УЧЁТНЫЕ ЗАПИСИ</p><h2>Пользователи</h2></div>
+        <button id="refresh-users" class="secondary" type="button">Обновить</button>
+      </div>
+      <p id="users-message" role="status"></p>
+      <div id="users-list" class="users-list"></div>
+    </section>
+  </main>
+  <script src="/static/users.js" defer></script>
+</body>
+</html>
