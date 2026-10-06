@@ -239,19 +239,81 @@ function projectCountryRing(ring, geometry) {
   return chains;
 }
 
+function coordinateOnHorizon(point, geometry) {
+  const x = (point[0] - geometry.x) / geometry.radius;
+  const y = (geometry.y - point[1]) / geometry.radius;
+  const centerLat = rotation.latitude * Math.PI / 180;
+  const latitude = Math.asin(Math.max(-1, Math.min(1, y * Math.cos(centerLat))));
+  const deltaLongitude = Math.atan2(x, -y * Math.sin(centerLat));
+  return [
+    ((rotation.longitude + deltaLongitude * 180 / Math.PI + 540) % 360) - 180,
+    latitude * 180 / Math.PI,
+  ];
+}
+
+function pointInRing(point, ring) {
+  let inside = false;
+  const [longitude, latitude] = point;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+    const [currentLongitude, currentLatitude] = ring[index];
+    const [previousLongitude, previousLatitude] = ring[previous];
+    const currentX = longitude + ((currentLongitude - longitude + 540) % 360) - 180;
+    const previousX = longitude + ((previousLongitude - longitude + 540) % 360) - 180;
+    if ((currentLatitude > latitude) !== (previousLatitude > latitude)
+      && longitude < (previousX - currentX) * (latitude - currentLatitude)
+        / (previousLatitude - currentLatitude) + currentX) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function connectAlongHorizon(context, chain, ring, geometry) {
+  const start = chain[0];
+  const end = chain[chain.length - 1];
+  const startAngle = Math.atan2(start[1] - geometry.y, start[0] - geometry.x);
+  const endAngle = Math.atan2(end[1] - geometry.y, end[0] - geometry.x);
+  const clockwise = (startAngle - endAngle + Math.PI * 2) % (Math.PI * 2);
+  const counterclockwise = clockwise - Math.PI * 2;
+  const clockwiseMidpoint = endAngle + clockwise / 2;
+  const counterclockwiseMidpoint = endAngle + counterclockwise / 2;
+  const clockwisePoint = coordinateOnHorizon([
+    geometry.x + Math.cos(clockwiseMidpoint) * geometry.radius,
+    geometry.y + Math.sin(clockwiseMidpoint) * geometry.radius,
+  ], geometry);
+  const counterclockwisePoint = coordinateOnHorizon([
+    geometry.x + Math.cos(counterclockwiseMidpoint) * geometry.radius,
+    geometry.y + Math.sin(counterclockwiseMidpoint) * geometry.radius,
+  ], geometry);
+  const clockwiseInside = pointInRing(clockwisePoint, ring);
+  const counterclockwiseInside = pointInRing(counterclockwisePoint, ring);
+  const anticlockwise = counterclockwiseInside && !clockwiseInside;
+  context.arc(geometry.x, geometry.y, geometry.radius, endAngle, startAngle, anticlockwise);
+}
+
 function drawCountryPolygon(polygon, geometry) {
   const visibleRings = polygon.map((ring) => projectCountryRing(ring, geometry));
   context.beginPath();
-  for (const chains of visibleRings) {
+  for (let ringIndex = 0; ringIndex < visibleRings.length; ringIndex += 1) {
+    const chains = visibleRings[ringIndex];
+    const ring = polygon[ringIndex];
     for (const chain of chains) {
       context.moveTo(chain[0][0], chain[0][1]);
       for (let index = 1; index < chain.length; index += 1) {
         context.lineTo(chain[index][0], chain[index][1]);
       }
+      const startRadius = Math.hypot(chain[0][0] - geometry.x, chain[0][1] - geometry.y);
+      const endRadius = Math.hypot(
+        chain[chain.length - 1][0] - geometry.x,
+        chain[chain.length - 1][1] - geometry.y,
+      );
+      if (Math.abs(startRadius - geometry.radius) < 1 && Math.abs(endRadius - geometry.radius) < 1) {
+        connectAlongHorizon(context, chain, ring, geometry);
+      }
       context.closePath();
     }
   }
-  context.fillStyle = "#263653";
+  context.fillStyle = "#354b70";
   context.fill("evenodd");
 
   context.beginPath();
@@ -263,8 +325,8 @@ function drawCountryPolygon(polygon, geometry) {
       }
     }
   }
-  context.strokeStyle = "rgba(177, 194, 219, .48)";
-  context.lineWidth = 0.65;
+  context.strokeStyle = "rgba(177, 194, 219, .34)";
+  context.lineWidth = 0.55;
   context.stroke();
 }
 
@@ -334,7 +396,7 @@ function drawFeatureGeometry(feature, geometry) {
     for (const coordinates of featureCoordinates(feature)) {
       const point = project(coordinates, geometry);
       if (point.z <= 0) continue;
-      const radius = feature === hoveredFeature ? 7 : 4.5;
+      const radius = feature === hoveredFeature ? 7 : 5.5;
       if (feature === selectedFeature) {
         const pulse = 13 + Math.sin(performance.now() / 240) * 2;
         context.beginPath();
@@ -343,6 +405,10 @@ function drawFeatureGeometry(feature, geometry) {
         context.lineWidth = 1.5;
         context.stroke();
       }
+      context.beginPath();
+      context.arc(point.x, point.y, radius + 3, 0, Math.PI * 2);
+      context.fillStyle = "rgba(7, 11, 28, .88)";
+      context.fill();
       context.beginPath();
       context.arc(point.x, point.y, radius, 0, Math.PI * 2);
       context.fillStyle = "#f2c5a5";
