@@ -16,6 +16,11 @@ let didDrag = false;
 let lastFrame = performance.now();
 let lastReadout = 0;
 let hoveredFeature = null;
+let hoveredGroup = null;
+let markerGroups = [];
+let lastActivatedGroup = "";
+let groupSelectionIndex = 0;
+let searchRequestSequence = 0;
 let globeGeometry = null;
 let countries = [];
 let selectedFeature = null;
@@ -384,6 +389,7 @@ function drawRing(ring, geometry, fill, stroke) {
 
 function drawFeatureGeometry(feature, geometry) {
   const geo = feature.geometry;
+  if (!["Polygon", "MultiPolygon"].includes(geo.type)) return;
   const area = feature.properties.kind === "area";
   const stroke = area ? "#d79a77" : "#f4c8aa";
   if (geo.type === "Polygon") {
@@ -392,34 +398,84 @@ function drawFeatureGeometry(feature, geometry) {
     for (const polygon of geo.coordinates) {
       for (const ring of polygon) drawRing(ring, geometry, area ? "rgba(215, 154, 119, .12)" : null, stroke);
     }
-  } else {
+  }
+}
+
+function buildMarkerGroups(geometry) {
+  const groupsByCell = new Map();
+  const groups = [];
+  const cellSize = 22;
+  const clusterDistance = 18;
+  for (const feature of features) {
+    if (["Polygon", "MultiPolygon"].includes(feature.geometry.type)) continue;
     for (const coordinates of featureCoordinates(feature)) {
       const point = project(coordinates, geometry);
       if (point.z <= 0) continue;
-      const radius = feature === hoveredFeature ? 7 : 5.5;
-      if (feature === selectedFeature) {
-        const pulse = 13 + Math.sin(performance.now() / 240) * 2;
-        context.beginPath();
-        context.arc(point.x, point.y, pulse, 0, Math.PI * 2);
-        context.strokeStyle = "rgba(242, 197, 165, .8)";
-        context.lineWidth = 1.5;
-        context.stroke();
+      const cellX = Math.floor(point.x / cellSize);
+      const cellY = Math.floor(point.y / cellSize);
+      let nearest = null;
+      let nearestDistance = clusterDistance;
+      for (let dx = -1; dx <= 1; dx += 1) {
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (const candidate of groupsByCell.get(`${cellX + dx},${cellY + dy}`) || []) {
+            const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+            if (distance < nearestDistance) {
+              nearest = candidate;
+              nearestDistance = distance;
+            }
+          }
+        }
       }
-      context.beginPath();
-      context.arc(point.x, point.y, radius + 3, 0, Math.PI * 2);
-      context.fillStyle = "rgba(7, 11, 28, .88)";
-      context.fill();
-      context.beginPath();
-      context.arc(point.x, point.y, radius, 0, Math.PI * 2);
-      context.fillStyle = "#f2c5a5";
-      context.shadowColor = "rgba(242, 197, 165, .8)";
-      context.shadowBlur = feature === hoveredFeature ? 18 : 8;
-      context.fill();
-      context.shadowBlur = 0;
-      context.strokeStyle = "#f6d6bd";
-      context.lineWidth = 1;
-      context.stroke();
+      if (nearest) {
+        const size = nearest.members.length;
+        nearest.x = (nearest.x * size + point.x) / (size + 1);
+        nearest.y = (nearest.y * size + point.y) / (size + 1);
+        nearest.members.push({ feature, coordinates });
+      } else {
+        const group = { x: point.x, y: point.y, cellX, cellY, members: [{ feature, coordinates }] };
+        const key = `${cellX},${cellY}`;
+        if (!groupsByCell.has(key)) groupsByCell.set(key, []);
+        groupsByCell.get(key).push(group);
+        groups.push(group);
+      }
     }
+  }
+  return groups;
+}
+
+function drawMarkerGroup(group) {
+  const clustered = group.members.length > 1;
+  const hovered = group === hoveredGroup || group.members.some(({ feature }) => feature === hoveredFeature);
+  const selected = group.members.some(({ feature }) => feature === selectedFeature);
+  const radius = clustered ? Math.min(16, 9 + Math.log2(group.members.length)) : hovered ? 7 : 5.5;
+  if (selected) {
+    const pulse = radius + 8 + Math.sin(performance.now() / 240) * 2;
+    context.beginPath();
+    context.arc(group.x, group.y, pulse, 0, Math.PI * 2);
+    context.strokeStyle = "rgba(242, 197, 165, .8)";
+    context.lineWidth = 1.5;
+    context.stroke();
+  }
+  context.beginPath();
+  context.arc(group.x, group.y, radius + 3, 0, Math.PI * 2);
+  context.fillStyle = "rgba(7, 11, 28, .92)";
+  context.fill();
+  context.beginPath();
+  context.arc(group.x, group.y, radius, 0, Math.PI * 2);
+  context.fillStyle = clustered ? "#9790e6" : "#f2c5a5";
+  context.shadowColor = clustered ? "rgba(151, 144, 230, .8)" : "rgba(242, 197, 165, .8)";
+  context.shadowBlur = hovered ? 18 : 8;
+  context.fill();
+  context.shadowBlur = 0;
+  context.strokeStyle = clustered ? "#d1ceff" : "#f6d6bd";
+  context.lineWidth = 1;
+  context.stroke();
+  if (clustered) {
+    context.fillStyle = "#fff";
+    context.font = "600 10px ui-monospace, monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(String(group.members.length), group.x, group.y + 0.5);
   }
 }
 
@@ -439,6 +495,8 @@ function drawGlobe(now) {
   drawGrid(globeGeometry);
   drawCountries(globeGeometry);
   for (const feature of features) drawFeatureGeometry(feature, globeGeometry);
+  markerGroups = buildMarkerGroups(globeGeometry);
+  for (const group of markerGroups) drawMarkerGroup(group);
   if (now - lastReadout > 250) {
     document.querySelector("#globe-readout").textContent =
       `ШИР ${rotation.latitude.toFixed(1)}° · ДОЛГ ${rotation.longitude.toFixed(1)}° · МАСШТАБ ${zoom.toFixed(1)}×`;
@@ -485,9 +543,21 @@ function coordinatesOf(feature) {
 
 function featureAt(x, y) {
   if (!globeGeometry) return null;
+  let nearestGroup = null;
+  let nearestGroupDistance = Infinity;
+  for (const group of markerGroups) {
+    const distance = Math.hypot(group.x - x, group.y - y);
+    const hitRadius = Math.max(20, Math.min(24, 10 + Math.log2(group.members.length + 1) * 3));
+    if (distance < hitRadius && distance < nearestGroupDistance) {
+      nearestGroup = group;
+      nearestGroupDistance = distance;
+    }
+  }
+  if (nearestGroup) return { group: nearestGroup, feature: nearestGroup.members[0].feature };
   let nearest = null;
   let nearestDistance = Infinity;
   for (const feature of features) {
+    if (!["Polygon", "MultiPolygon"].includes(feature.geometry.type)) continue;
     for (const coordinates of coordinatesOf(feature)) {
       const point = project(coordinates, globeGeometry);
       const distance = Math.hypot(point.x - x, point.y - y);
@@ -497,16 +567,48 @@ function featureAt(x, y) {
       }
     }
   }
-  return nearest;
+  return nearest ? { group: null, feature: nearest } : null;
 }
 
-function updateTooltip(feature) {
-  if (!feature) {
+function updateTooltip(target) {
+  if (!target) {
     tooltip.hidden = true;
     return;
   }
-  tooltip.textContent = `${feature.properties.name} · ${feature.properties.documents.length} док.`;
+  const { group, feature } = target;
+  tooltip.textContent = group?.members.length > 1
+    ? `${group.members.length} объектов рядом · ${group.members.slice(0, 3).map(({ feature: item }) => item.properties.name).join(", ")}`
+    : `${feature.properties.name} · ${feature.properties.documents.length} док.`;
   tooltip.hidden = false;
+}
+
+function activateMapTarget(target) {
+  if (!target) return;
+  const { group, feature } = target;
+  if (!group || group.members.length < 2) {
+    focusFeature(feature);
+    return;
+  }
+  const signature = group.members.map(({ feature: item }) => item.id).sort().join(",");
+  if (targetZoom >= 1.64 && zoom >= 1.5) {
+    if (signature !== lastActivatedGroup) groupSelectionIndex = 0;
+    else groupSelectionIndex += 1;
+    lastActivatedGroup = signature;
+    focusFeature(group.members[groupSelectionIndex % group.members.length].feature);
+    return;
+  }
+  lastActivatedGroup = signature;
+  groupSelectionIndex = 0;
+  selectedFeature = null;
+  selectionPanel.hidden = true;
+  for (const card of results.children) {
+    card.classList.remove("selected");
+    card.setAttribute("aria-pressed", "false");
+  }
+  const [longitude, latitude] = group.members[0].coordinates;
+  rotation.longitude = longitude;
+  rotation.latitude = latitude;
+  targetZoom = Math.min(1.65, Math.max(targetZoom, zoom) + 0.25);
 }
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -528,9 +630,11 @@ canvas.addEventListener("pointermove", (event) => {
     return;
   }
   const bounds = canvas.getBoundingClientRect();
-  hoveredFeature = featureAt(event.clientX - bounds.left, event.clientY - bounds.top);
-  canvas.classList.toggle("has-target", Boolean(hoveredFeature));
-  updateTooltip(hoveredFeature);
+  const target = featureAt(event.clientX - bounds.left, event.clientY - bounds.top);
+  hoveredFeature = target?.feature || null;
+  hoveredGroup = target?.group || null;
+  canvas.classList.toggle("has-target", Boolean(target));
+  updateTooltip(target);
 });
 canvas.addEventListener("pointerup", (event) => {
   if (!dragging) return;
@@ -541,8 +645,7 @@ canvas.addEventListener("pointerup", (event) => {
   canvas.classList.remove("dragging");
   if (!didDrag) {
     const bounds = canvas.getBoundingClientRect();
-    const feature = featureAt(event.clientX - bounds.left, event.clientY - bounds.top);
-    if (feature) focusFeature(feature);
+    activateMapTarget(featureAt(event.clientX - bounds.left, event.clientY - bounds.top));
   }
 });
 canvas.addEventListener("pointercancel", () => {
@@ -564,6 +667,7 @@ document.querySelector("#zoom-out").addEventListener("click", () => {
 document.querySelector("#globe-reset").addEventListener("click", () => {
   selectedFeature = null;
   hoveredFeature = null;
+  hoveredGroup = null;
   selectionPanel.hidden = true;
   targetZoom = 1;
   rotation = { longitude: 38, latitude: 54 };
@@ -575,6 +679,7 @@ document.querySelector("#globe-reset").addEventListener("click", () => {
 canvas.addEventListener("pointerleave", () => {
   if (!dragging) {
     hoveredFeature = null;
+    hoveredGroup = null;
     tooltip.hidden = true;
     canvas.classList.remove("has-target");
   }
@@ -589,6 +694,7 @@ window.addEventListener("keydown", (event) => {
 
 async function search() {
   message.textContent = "";
+  const requestId = ++searchRequestSequence;
   const params = new URLSearchParams(new FormData(document.querySelector("#search-form")));
   for (const [key, value] of [...params.entries()]) if (!value) params.delete(key);
   try {
@@ -598,14 +704,20 @@ async function search() {
       return;
     }
     const body = await response.json();
+    if (requestId !== searchRequestSequence) return;
     if (!response.ok) throw new Error(body.detail || "Не удалось выполнить поиск");
     features = body.features;
+    if (selectedFeature && !features.some((feature) => feature.id === selectedFeature.id)) {
+      selectedFeature = null;
+      selectionPanel.hidden = true;
+    }
     results.replaceChildren();
     for (const feature of features) renderFeature(feature);
     count.textContent = `${features.length} объектов`;
     featureCount.textContent = `${features.length} ОБЪЕКТОВ`;
     if (!features.length) message.textContent = "Ничего не найдено или измените фильтры.";
   } catch (error) {
+    if (requestId !== searchRequestSequence) return;
     message.textContent = error.message;
     count.textContent = "Ошибка";
   }
