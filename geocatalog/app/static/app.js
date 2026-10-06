@@ -22,7 +22,7 @@ let lastActivatedGroup = "";
 let groupSelectionIndex = 0;
 let searchRequestSequence = 0;
 let globeGeometry = null;
-let countries = [];
+let landPoints = [];
 let selectedFeature = null;
 const selectionPanel = document.querySelector("#globe-selection");
 const selectionTitle = document.querySelector("#selection-title");
@@ -173,178 +173,105 @@ function drawGrid(geometry) {
   context.shadowBlur = 0;
 }
 
-function countryPolygons(geometry) {
-  if (geometry.type === "Polygon") return [geometry.coordinates];
-  if (geometry.type === "MultiPolygon") return geometry.coordinates;
-  return [];
-}
-
-function interpolateCoordinate(start, end, fraction) {
-  const deltaLongitude = ((end[0] - start[0] + 540) % 360) - 180;
-  let longitude = start[0] + deltaLongitude * fraction;
-  if (longitude > 180) longitude -= 360;
-  if (longitude < -180) longitude += 360;
-  return [longitude, start[1] + (end[1] - start[1]) * fraction];
-}
-
-function horizonPoint(start, end, geometry) {
-  let visibleFraction = 0;
-  let hiddenFraction = 1;
-  const startVisible = project(start, geometry).z > 0;
-  for (let step = 0; step < 14; step += 1) {
-    const middle = (visibleFraction + hiddenFraction) / 2;
-    const point = project(interpolateCoordinate(start, end, middle), geometry);
-    if ((point.z > 0) === startVisible) visibleFraction = middle;
-    else hiddenFraction = middle;
+function unwrapRing(ring) {
+  const unwrapped = [];
+  for (const coordinate of ring) {
+    const longitude = unwrapped.length
+      ? unwrapped[unwrapped.length - 1][0] + ((coordinate[0] - unwrapped[unwrapped.length - 1][0] + 540) % 360) - 180
+      : coordinate[0];
+    unwrapped.push([longitude, coordinate[1]]);
   }
-  return project(interpolateCoordinate(start, end, (visibleFraction + hiddenFraction) / 2), geometry);
+  return unwrapped;
 }
 
-function projectCountryRing(ring, geometry) {
-  const chains = [];
-  let chain = [];
-  const append = (coordinates) => {
-    const point = project(coordinates, geometry);
-    if (point.z <= 0) return;
-    chain.push([point.x, point.y]);
-  };
-  const finish = () => {
-    if (chain.length > 1) chains.push(chain);
-    chain = [];
-  };
-
-  for (let index = 0; index < ring.length - 1; index += 1) {
-    const start = ring[index];
-    const end = ring[index + 1];
-    const deltaLongitude = ((end[0] - start[0] + 540) % 360) - 180;
-    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(deltaLongitude), Math.abs(end[1] - start[1])) / 3));
-    let previous = start;
-    let previousVisible = project(previous, geometry).z > 0;
-    if (previousVisible && chain.length === 0) append(previous);
-
-    for (let step = 1; step <= steps; step += 1) {
-      const current = interpolateCoordinate(start, end, step / steps);
-      const currentVisible = project(current, geometry).z > 0;
-      if (previousVisible && currentVisible) {
-        append(current);
-      } else if (previousVisible && !currentVisible) {
-        const edge = horizonPoint(previous, current, geometry);
-        chain.push([edge.x, edge.y]);
-        finish();
-      } else if (!previousVisible && currentVisible) {
-        const edge = horizonPoint(previous, current, geometry);
-        chain.push([edge.x, edge.y]);
-        append(current);
-      }
-      previous = current;
-      previousVisible = currentVisible;
-    }
-  }
-  finish();
-  return chains;
+function ringCenterLongitude(ring) {
+  return ring.reduce((sum, coordinate) => sum + coordinate[0], 0) / ring.length;
 }
 
-function coordinateOnHorizon(point, geometry) {
-  const x = (point[0] - geometry.x) / geometry.radius;
-  const y = (geometry.y - point[1]) / geometry.radius;
-  const centerLat = rotation.latitude * Math.PI / 180;
-  const latitude = Math.asin(Math.max(-1, Math.min(1, y * Math.cos(centerLat))));
-  const deltaLongitude = Math.atan2(x, -y * Math.sin(centerLat));
-  return [
-    ((rotation.longitude + deltaLongitude * 180 / Math.PI + 540) % 360) - 180,
-    latitude * 180 / Math.PI,
-  ];
+function drawRasterRing(rasterContext, ring, shift, width, height) {
+  ring.forEach(([longitude, latitude], index) => {
+    const x = ((longitude + shift + 180) / 360) * width;
+    const y = ((90 - latitude) / 180) * height;
+    if (index === 0) rasterContext.moveTo(x, y);
+    else rasterContext.lineTo(x, y);
+  });
+  rasterContext.closePath();
 }
 
-function pointInRing(point, ring) {
-  let inside = false;
-  const [longitude, latitude] = point;
-  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
-    const [currentLongitude, currentLatitude] = ring[index];
-    const [previousLongitude, previousLatitude] = ring[previous];
-    const currentX = longitude + ((currentLongitude - longitude + 540) % 360) - 180;
-    const previousX = longitude + ((previousLongitude - longitude + 540) % 360) - 180;
-    if ((currentLatitude > latitude) !== (previousLatitude > latitude)
-      && longitude < (previousX - currentX) * (latitude - currentLatitude)
-        / (previousLatitude - currentLatitude) + currentX) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
+function buildLandPoints(countryFeatures) {
+  const width = 1440;
+  const height = 720;
+  const spacing = 6;
+  const raster = document.createElement("canvas");
+  raster.width = width;
+  raster.height = height;
+  const rasterContext = raster.getContext("2d", { willReadFrequently: true });
+  rasterContext.fillStyle = "#fff";
 
-function connectAlongHorizon(context, chain, ring, geometry) {
-  const start = chain[0];
-  const end = chain[chain.length - 1];
-  const startAngle = Math.atan2(start[1] - geometry.y, start[0] - geometry.x);
-  const endAngle = Math.atan2(end[1] - geometry.y, end[0] - geometry.x);
-  const clockwise = (startAngle - endAngle + Math.PI * 2) % (Math.PI * 2);
-  const counterclockwise = clockwise - Math.PI * 2;
-  const clockwiseMidpoint = endAngle + clockwise / 2;
-  const counterclockwiseMidpoint = endAngle + counterclockwise / 2;
-  const clockwisePoint = coordinateOnHorizon([
-    geometry.x + Math.cos(clockwiseMidpoint) * geometry.radius,
-    geometry.y + Math.sin(clockwiseMidpoint) * geometry.radius,
-  ], geometry);
-  const counterclockwisePoint = coordinateOnHorizon([
-    geometry.x + Math.cos(counterclockwiseMidpoint) * geometry.radius,
-    geometry.y + Math.sin(counterclockwiseMidpoint) * geometry.radius,
-  ], geometry);
-  const clockwiseInside = pointInRing(clockwisePoint, ring);
-  const counterclockwiseInside = pointInRing(counterclockwisePoint, ring);
-  const anticlockwise = counterclockwiseInside && !clockwiseInside;
-  context.arc(geometry.x, geometry.y, geometry.radius, endAngle, startAngle, anticlockwise);
-}
-
-function drawCountryPolygon(polygon, geometry) {
-  const visibleRings = polygon.map((ring) => projectCountryRing(ring, geometry));
-  context.beginPath();
-  for (let ringIndex = 0; ringIndex < visibleRings.length; ringIndex += 1) {
-    const chains = visibleRings[ringIndex];
-    const ring = polygon[ringIndex];
-    for (const chain of chains) {
-      context.moveTo(chain[0][0], chain[0][1]);
-      for (let index = 1; index < chain.length; index += 1) {
-        context.lineTo(chain[index][0], chain[index][1]);
-      }
-      const startRadius = Math.hypot(chain[0][0] - geometry.x, chain[0][1] - geometry.y);
-      const endRadius = Math.hypot(
-        chain[chain.length - 1][0] - geometry.x,
-        chain[chain.length - 1][1] - geometry.y,
-      );
-      if (Math.abs(startRadius - geometry.radius) < 1 && Math.abs(endRadius - geometry.radius) < 1) {
-        connectAlongHorizon(context, chain, ring, geometry);
-      }
-      context.closePath();
-    }
-  }
-  context.fillStyle = "#354b70";
-  context.fill("evenodd");
-
-  context.beginPath();
-  for (const chains of visibleRings) {
-    for (const chain of chains) {
-      context.moveTo(chain[0][0], chain[0][1]);
-      for (let index = 1; index < chain.length; index += 1) {
-        context.lineTo(chain[index][0], chain[index][1]);
+  for (const feature of countryFeatures) {
+    const polygons = feature.geometry.type === "Polygon"
+      ? [feature.geometry.coordinates]
+      : feature.geometry.type === "MultiPolygon" ? feature.geometry.coordinates : [];
+    for (const polygon of polygons) {
+      const rings = polygon.map(unwrapRing);
+      if (!rings.length) continue;
+      const outerCenter = ringCenterLongitude(rings[0]);
+      for (let shift = -360; shift <= 360; shift += 360) {
+        rasterContext.beginPath();
+        for (let ringIndex = 0; ringIndex < rings.length; ringIndex += 1) {
+          const ring = rings[ringIndex];
+          const alignment = ringIndex === 0
+            ? 0
+            : 360 * Math.round((outerCenter - ringCenterLongitude(ring)) / 360);
+          drawRasterRing(rasterContext, ring, shift + alignment, width, height);
+        }
+        rasterContext.fill("evenodd");
       }
     }
   }
-  context.strokeStyle = "rgba(177, 194, 219, .34)";
-  context.lineWidth = 0.55;
-  context.stroke();
+
+  const pixels = rasterContext.getImageData(0, 0, width, height).data;
+  const points = [];
+  for (let y = spacing / 2; y < height; y += spacing) {
+    for (let x = spacing / 2; x < width; x += spacing) {
+      if (pixels[(Math.floor(y) * width + Math.floor(x)) * 4 + 3] < 128) continue;
+      const latitude = 90 - y / height * 180;
+      const longitude = x / width * 360 - 180;
+      const radians = latitude * Math.PI / 180;
+      points.push({
+        longitude,
+        sinLatitude: Math.sin(radians),
+        cosLatitude: Math.cos(radians),
+      });
+    }
+  }
+  return points;
 }
 
-function drawCountries(geometry) {
+function drawLandPoints(geometry) {
+  const centerLatitude = rotation.latitude * Math.PI / 180;
+  const sinCenter = Math.sin(centerLatitude);
+  const cosCenter = Math.cos(centerLatitude);
+  const radiansPerDegree = Math.PI / 180;
+  const radius = Math.max(0.8, Math.min(1.5, geometry.radius * 0.0022));
   context.save();
   context.beginPath();
   context.arc(geometry.x, geometry.y, geometry.radius, 0, Math.PI * 2);
   context.clip();
-  for (const country of countries) {
-    for (const polygon of countryPolygons(country.geometry)) {
-      drawCountryPolygon(polygon, geometry);
-    }
+  context.beginPath();
+  for (const landPoint of landPoints) {
+    const deltaLongitude = (landPoint.longitude - rotation.longitude) * radiansPerDegree;
+    const sinLongitude = Math.sin(deltaLongitude);
+    const cosLongitude = Math.cos(deltaLongitude);
+    const x = landPoint.cosLatitude * sinLongitude;
+    const y = landPoint.sinLatitude * cosCenter - landPoint.cosLatitude * cosLongitude * sinCenter;
+    const z = landPoint.sinLatitude * sinCenter + landPoint.cosLatitude * cosLongitude * cosCenter;
+    if (z <= 0) continue;
+    context.moveTo(geometry.x + geometry.radius * x + radius, geometry.y - geometry.radius * y);
+    context.arc(geometry.x + geometry.radius * x, geometry.y - geometry.radius * y, radius, 0, Math.PI * 2);
   }
+  context.fillStyle = "rgba(139, 151, 226, .82)";
+  context.fill();
   context.restore();
 }
 
@@ -493,7 +420,7 @@ function drawGlobe(now) {
   const radius = Math.max(80, Math.min(width * 0.43, height * 0.43) * zoom);
   globeGeometry = { x: width / 2, y: height / 2, radius };
   drawGrid(globeGeometry);
-  drawCountries(globeGeometry);
+  drawLandPoints(globeGeometry);
   for (const feature of features) drawFeatureGeometry(feature, globeGeometry);
   markerGroups = buildMarkerGroups(globeGeometry);
   for (const group of markerGroups) drawMarkerGroup(group);
@@ -741,7 +668,8 @@ fetch("/static/ne_110m_admin_0_countries.geojson")
   })
   .then((data) => {
     if (!Array.isArray(data.features)) throw new Error("Файл офлайн-карты стран имеет неверный формат");
-    countries = data.features;
+    landPoints = buildLandPoints(data.features);
+    if (!landPoints.length) throw new Error("В офлайн-карте не удалось найти точки суши");
   })
   .catch((error) => {
     message.textContent = error.message;
