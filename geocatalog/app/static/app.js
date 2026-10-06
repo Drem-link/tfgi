@@ -43,8 +43,20 @@ function showDocuments(container, documents) {
     if (metadata) card.append(text("p", metadata));
     if (doc.description) card.append(text("p", doc.description));
     if (doc.archive_reference) card.append(text("p", `Шифр/место хранения: ${doc.archive_reference}`));
+    for (const file of doc.files || []) {
+      const link = text("a", `${file.filename} · ${formatFileSize(file.size_bytes)}`, "file-download");
+      link.href = `/api/files/${encodeURIComponent(file.id)}`;
+      link.setAttribute("download", "");
+      card.append(link);
+    }
     container.append(card);
   }
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
 function renderFeature(feature, target = results) {
@@ -566,7 +578,11 @@ fetch("/api/session", { credentials: "same-origin" })
     return response.json();
   })
   .then((session) => {
-    if (session?.role === "admin") document.querySelector("#user-admin-link").hidden = false;
+      if (session) document.querySelector("#user-label").textContent = `● ${session.username}`;
+      if (session?.role === "admin") {
+        document.querySelector("#user-admin-link").hidden = false;
+        document.querySelector("#catalog-admin-link").hidden = false;
+      }
   })
   .catch((error) => {
     message.textContent = error.message;

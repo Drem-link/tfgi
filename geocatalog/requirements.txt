@@ -1,5 +1,6 @@
 fastapi==0.115.12
 argon2-cffi==23.1.0
 itsdangerous==2.2.0
+python-multipart==0.0.20
 psycopg[binary]==3.2.13
 uvicorn[standard]==0.34.2

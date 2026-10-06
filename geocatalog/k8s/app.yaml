@@ -1,4 +1,42 @@
 apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: geocatalog-uploads-pv
+spec:
+  capacity:
+    storage: 100Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /var/lib/containers/k8s-app-data/geocatalog-uploads
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - zabbix
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: geocatalog-uploads
+  namespace: geocatalog
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: geocatalog-uploads-pv
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: geocatalog
@@ -32,6 +70,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -122,7 +161,12 @@ spec:
             - name: tls
               mountPath: /tls
               readOnly: true
+            - name: uploads
+              mountPath: /uploads
       volumes:
         - name: tls
           secret:
             secretName: geocatalog-tls
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: geocatalog-uploads

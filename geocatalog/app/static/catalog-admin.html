@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Добавление данных — Геологический каталог</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/catalog-admin.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <a class="brand-icon" href="/" aria-label="В каталог">◉</a>
+      <div>
+        <h1>Добавление данных</h1>
+        <p>СОЗДАНИЕ ТОЧКИ ИЛИ ПЛОЩАДИ · КАРТОЧКИ ДОКУМЕНТОВ · ФАЙЛЫ</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <a class="header-link" href="/">← В каталог</a>
+      <a class="header-link" href="/admin/users">Пользователи</a>
+      <form method="post" action="/auth/logout"><button class="ghost-button" type="submit">Выйти</button></form>
+    </div>
+  </header>
+  <main class="catalog-admin-layout">
+    <section class="catalog-admin-panel">
+      <p class="eyebrow">НОВАЯ ЗАПИСЬ</p>
+      <h2>Привязать документ к объекту</h2>
+      <p class="help">Создайте точку/площадь или выберите существующую. Все выбранные файлы прикрепятся к одной карточке документа.</p>
+      <form id="catalog-form" class="catalog-form">
+        <label for="feature-mode">Геологический объект</label>
+        <select id="feature-mode" name="feature_mode">
+          <option value="new">Создать новый объект</option>
+          <option value="existing">Выбрать существующий объект</option>
+        </select>
+
+        <div id="existing-feature-fields" hidden>
+          <label for="feature-id">Объект каталога</label>
+          <select id="feature-id" name="feature_id"></select>
+        </div>
+
+        <div id="new-feature-fields" class="form-section">
+          <label for="feature-name">Название объекта</label>
+          <input id="feature-name" name="feature_name" maxlength="500" placeholder="Например: Скважина Северная-1">
+          <label for="geometry-kind">Тип геометрии</label>
+          <select id="geometry-kind" name="geometry_kind">
+            <option value="well">Точка</option>
+            <option value="area">Площадь / контур</option>
+          </select>
+          <div id="point-fields" class="coordinate-fields">
+            <label>Долгота
+              <input name="longitude" type="number" min="-180" max="180" step="any" placeholder="150.80">
+            </label>
+            <label>Широта
+              <input name="latitude" type="number" min="-90" max="90" step="any" placeholder="59.56">
+            </label>
+          </div>
+          <div id="area-fields" hidden>
+            <label for="polygon-vertices">Вершины контура (долгота,широта; ...)</label>
+            <textarea id="polygon-vertices" name="polygon_vertices" rows="4"
+              placeholder="150.8,59.5; 151.2,59.5; 151.2,60.0; 150.8,60.0"></textarea>
+            <p class="hint">Минимум 3 вершины. Замкните контур повтором первой координаты или форма сделает это сама.</p>
+          </div>
+          <label for="feature-metadata">Дополнительные данные объекта (JSON, необязательно)</label>
+          <textarea id="feature-metadata" name="feature_metadata" rows="2">{}</textarea>
+        </div>
+
+        <div class="form-section">
+          <p class="eyebrow">КАРТОЧКА ДОКУМЕНТА</p>
+          <label for="document-title">Название документа</label>
+          <input id="document-title" name="document_title" required maxlength="500" placeholder="Отчёт о геологической съёмке">
+          <div class="coordinate-fields">
+            <label>Фондовый номер
+              <input name="inventory_number" maxlength="200">
+            </label>
+            <label>Год
+              <input name="document_year" type="number" min="1500" max="2200">
+            </label>
+          </div>
+          <label>Регион<input name="region" maxlength="200"></label>
+          <label>Тема<input name="topic" maxlength="1000"></label>
+          <label>Описание<textarea name="description" rows="3" maxlength="10000"></textarea></label>
+          <label>Архивный шифр / место хранения<input name="archive_reference" maxlength="1000"></label>
+        </div>
+
+        <div class="form-section">
+          <p class="eyebrow">ВЛОЖЕНИЯ</p>
+          <label for="files">Выберите один или несколько файлов</label>
+          <input id="files" name="files" type="file" multiple required
+            accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.docx,.xlsx,.pptx,.txt,.csv">
+          <p class="hint">PDF, JPG, PNG, TIFF, DOCX, XLSX, PPTX, TXT, CSV. До 50 МБ на файл, до 10 файлов и 100 МБ за одну загрузку. Исполняемые файлы и старые Office-форматы запрещены. Скачивание доступно всем вошедшим пользователям.</p>
+        </div>
+        <button id="submit-upload" type="submit">Сохранить объект и документы</button>
+      </form>
+      <p id="catalog-message" role="status"></p>
+    </section>
+    <section class="catalog-admin-panel">
+      <div class="catalog-files-title">
+        <div><p class="eyebrow">ХРАНИЛИЩЕ</p><h2>Загруженные файлы</h2></div>
+        <button id="refresh-files" class="secondary" type="button">Обновить</button>
+      </div>
+      <p class="help">Файлы хранятся на постоянном диске сервера и скачиваются через авторизованный каталог.</p>
+      <div id="uploaded-files" class="uploaded-files"></div>
+    </section>
+  </main>
+  <script src="/static/catalog-admin.js" defer></script>
+</body>
+</html>

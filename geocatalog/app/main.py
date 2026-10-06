@@ -1,8 +1,14 @@
+import csv
+import io
 import json
 import math
 import os
+import re
+import secrets
 import time
+import zipfile
 from contextlib import asynccontextmanager, closing
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qs, urlsplit
 
@@ -11,7 +17,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
@@ -22,6 +28,23 @@ login_failures: dict[str, list[float]] = {}
 session_max_age = 8 * 60 * 60
 login_window = 15 * 60
 login_failure_limit = 8
+max_file_size = 50 * 1024 * 1024
+max_upload_files = 10
+max_request_size = 100 * 1024 * 1024
+upload_root = Path(os.environ.get("UPLOAD_DIR", "/uploads"))
+allowed_file_types = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+}
 
 
 def auth_config() -> tuple[str, str, URLSafeTimedSerializer]:
@@ -58,6 +81,20 @@ def ensure_users_table() -> None:
             """,
             (username, password_hash),
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS document_files (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                storage_key TEXT NOT NULL UNIQUE CHECK (storage_key ~ '^[a-f0-9]{48}\\.[a-z0-9]+$'),
+                original_filename TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                size_bytes BIGINT NOT NULL CHECK (size_bytes BETWEEN 1 AND 52428800),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS document_files_document_idx ON document_files (document_id)")
 
 
 @asynccontextmanager
@@ -101,6 +138,7 @@ def is_public_path(path: str) -> bool:
 
 @app.middleware("http")
 async def require_login(request: Request, call_next):
+    is_upload = request.url.path == "/api/admin/documents" and request.method == "POST"
     if is_public_path(request.url.path):
         response = await call_next(request)
     else:
@@ -112,7 +150,17 @@ async def require_login(request: Request, call_next):
                 response = RedirectResponse("/login", status_code=303)
         else:
             request.state.user = user
-            if request.url.path.startswith("/admin") and user["role"] != "admin":
+            if is_upload and user["role"] != "admin":
+                response = JSONResponse({"detail": "administrator permission required"}, status_code=403)
+            elif is_upload and request.headers.get("content-length") is None:
+                response = JSONResponse({"detail": "Content-Length is required for file uploads"}, status_code=411)
+            elif is_upload and not request.headers.get("content-length", "").isdigit():
+                response = JSONResponse({"detail": "invalid Content-Length"}, status_code=400)
+            elif is_upload and int(request.headers["content-length"]) > max_request_size + 5 * 1024 * 1024:
+                response = JSONResponse({"detail": "upload request cannot exceed 105 MiB"}, status_code=413)
+            elif request.url.path.startswith("/api/admin/") and user["role"] != "admin":
+                response = JSONResponse({"detail": "administrator permission required"}, status_code=403)
+            elif request.url.path.startswith("/admin") and user["role"] != "admin":
                 response = RedirectResponse("/", status_code=303)
             else:
                 response = await call_next(request)
@@ -166,6 +214,85 @@ class UserUpdate(BaseModel):
         return self
 
 
+def require_same_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if origin and urlsplit(origin).netloc != request.headers.get("host", ""):
+        raise HTTPException(status_code=403, detail="invalid request origin")
+    if not origin and request.headers.get("sec-fetch-site") == "cross-site":
+        raise HTTPException(status_code=403, detail="cross-site request denied")
+
+
+def parse_coordinates(value: str) -> tuple[float, float]:
+    try:
+        longitude, latitude = map(float, value.split(","))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="each vertex must be longitude,latitude") from exc
+    if not math.isfinite(longitude) or not math.isfinite(latitude):
+        raise HTTPException(status_code=422, detail="coordinates must be finite numbers")
+    if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
+        raise HTTPException(status_code=422, detail="coordinates are outside longitude/latitude ranges")
+    return longitude, latitude
+
+
+def parse_polygon_vertices(value: str) -> list[tuple[float, float]]:
+    vertices = [parse_coordinates(pair.strip()) for pair in value.split(";") if pair.strip()]
+    if len(vertices) < 3:
+        raise HTTPException(status_code=422, detail="an area needs at least three vertices")
+    if vertices[-1] != vertices[0]:
+        vertices.append(vertices[0])
+    if len(set(vertices[:-1])) < 3:
+        raise HTTPException(status_code=422, detail="an area needs at least three distinct vertices")
+    return vertices
+
+
+def validate_uploaded_file(filename: str | None, data: bytes) -> tuple[str, str, str]:
+    if not filename:
+        raise HTTPException(status_code=422, detail="every uploaded file must have a filename")
+    normalized_name = filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not normalized_name or len(normalized_name) > 255 or any(ord(char) < 32 for char in normalized_name):
+        raise HTTPException(status_code=422, detail="invalid filename")
+    extension = Path(normalized_name).suffix.lower()
+    media_type = allowed_file_types.get(extension)
+    if media_type is None:
+        raise HTTPException(status_code=415, detail=f"file type {extension or '(no extension)'} is not allowed")
+    if not data or len(data) > max_file_size:
+        raise HTTPException(status_code=413, detail="each file must be between 1 byte and 50 MiB")
+
+    valid = False
+    if extension == ".pdf":
+        valid = data.startswith(b"%PDF-")
+    elif extension in {".jpg", ".jpeg"}:
+        valid = data.startswith(b"\xff\xd8\xff")
+    elif extension == ".png":
+        valid = data.startswith(b"\x89PNG\r\n\x1a\n")
+    elif extension in {".tif", ".tiff"}:
+        valid = data.startswith((b"II*\x00", b"MM\x00*"))
+    elif extension in {".docx", ".xlsx", ".pptx"}:
+        expected_part = {
+            ".docx": "word/",
+            ".xlsx": "xl/",
+            ".pptx": "ppt/",
+        }[extension]
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                names = set(archive.namelist())
+                valid = "[Content_Types].xml" in names and any(name.startswith(expected_part) for name in names)
+        except (zipfile.BadZipFile, OSError):
+            valid = False
+    elif extension in {".txt", ".csv"}:
+        try:
+            text_data = data.decode("utf-8-sig")
+            valid = "\x00" not in text_data
+            if valid and extension == ".csv":
+                next(csv.reader(io.StringIO(text_data)), None)
+        except (UnicodeDecodeError, csv.Error):
+            valid = False
+
+    if not valid:
+        raise HTTPException(status_code=415, detail=f"file contents do not match {extension}")
+    return normalized_name, media_type, extension[1:]
+
+
 def require_admin(request: Request) -> dict:
     user = getattr(request.state, "user", None)
     if user is None or user["role"] != "admin":
@@ -195,6 +322,31 @@ def decode_geojson(value):
     return json.loads(value) if isinstance(value, str) else value
 
 
+def attach_document_files(connection, feature_rows) -> None:
+    documents = [document for row in feature_rows for document in row["documents"]]
+    document_ids = [document["id"] for document in documents]
+    if not document_ids:
+        return
+    files = connection.execute(
+        """
+        SELECT id, document_id, original_filename, size_bytes
+        FROM document_files
+        WHERE document_id = ANY(%s)
+        ORDER BY original_filename
+        """,
+        (document_ids,),
+    ).fetchall()
+    files_by_document: dict[int, list[dict]] = {}
+    for file in files:
+        files_by_document.setdefault(file["document_id"], []).append({
+            "id": file["id"],
+            "filename": file["original_filename"],
+            "size_bytes": file["size_bytes"],
+        })
+    for document in documents:
+        document["files"] = files_by_document.get(document["id"], [])
+
+
 @app.get("/")
 def index():
     return FileResponse("app/static/index.html")
@@ -209,6 +361,12 @@ def login_page():
 def users_page(request: Request):
     require_admin(request)
     return FileResponse("app/static/users.html")
+
+
+@app.get("/admin/catalog")
+def catalog_admin_page(request: Request):
+    require_admin(request)
+    return FileResponse("app/static/catalog-admin.html")
 
 
 @app.get("/api/session")
@@ -297,6 +455,246 @@ def update_user(user_id: int, update: UserUpdate, request: Request):
             values,
         ).fetchone()
     return updated
+
+
+@app.get("/api/admin/features")
+def list_features_for_admin(request: Request):
+    require_admin(request)
+    with closing(get_connection()) as connection:
+        features = connection.execute(
+            "SELECT id, name, kind FROM features ORDER BY name"
+        ).fetchall()
+    return {"features": features}
+
+
+@app.get("/api/admin/files")
+def list_files_for_admin(request: Request):
+    require_admin(request)
+    with closing(get_connection()) as connection:
+        files = connection.execute(
+            """
+            SELECT file.id, file.original_filename, file.size_bytes, document.title AS document_title,
+                   feature.name AS feature_name
+            FROM document_files file
+            JOIN documents document ON document.id = file.document_id
+            JOIN feature_documents link ON link.document_id = document.id
+            JOIN features feature ON feature.id = link.feature_id
+            ORDER BY file.created_at DESC, file.original_filename
+            """
+        ).fetchall()
+    return {"files": files}
+
+
+@app.delete("/api/admin/files/{file_id}", status_code=204)
+def delete_uploaded_file(file_id: int, request: Request):
+    require_admin(request)
+    require_same_origin(request)
+    with get_connection() as connection:
+        file = connection.execute(
+            "DELETE FROM document_files WHERE id = %s RETURNING storage_key",
+            (file_id,),
+        ).fetchone()
+    if file is None:
+        raise HTTPException(status_code=404, detail="file not found")
+    if not re.fullmatch(r"[a-f0-9]{48}\.[a-z0-9]+", file["storage_key"]):
+        raise HTTPException(status_code=500, detail="invalid stored file key")
+    (upload_root / file["storage_key"]).unlink(missing_ok=True)
+    return None
+
+
+@app.post("/api/admin/documents", status_code=201)
+async def create_document_with_files(
+    request: Request,
+    feature_mode: Annotated[str, Form()],
+    document_title: Annotated[str, Form(min_length=1, max_length=500)],
+    files: Annotated[list[UploadFile], File()],
+    feature_id: Annotated[str, Form()] = "",
+    feature_name: Annotated[str, Form(max_length=500)] = "",
+    geometry_kind: Annotated[str, Form()] = "well",
+    longitude: Annotated[str, Form()] = "",
+    latitude: Annotated[str, Form()] = "",
+    polygon_vertices: Annotated[str, Form(max_length=20000)] = "",
+    feature_metadata: Annotated[str, Form(max_length=10000)] = "{}",
+    inventory_number: Annotated[str, Form(max_length=200)] = "",
+    region: Annotated[str, Form(max_length=200)] = "",
+    document_year: Annotated[str, Form()] = "",
+    topic: Annotated[str, Form(max_length=1000)] = "",
+    description: Annotated[str, Form(max_length=10000)] = "",
+    archive_reference: Annotated[str, Form(max_length=1000)] = "",
+):
+    require_admin(request)
+    require_same_origin(request)
+    if feature_mode not in {"new", "existing"}:
+        raise HTTPException(status_code=422, detail="feature_mode must be new or existing")
+    title = document_title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="document title cannot be blank")
+    if not files or len(files) > max_upload_files:
+        raise HTTPException(status_code=413, detail="select between 1 and 10 files")
+
+    year = None
+    if document_year.strip():
+        try:
+            year = int(document_year)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="document year must be a number") from exc
+        if not 1500 <= year <= 2200:
+            raise HTTPException(status_code=422, detail="document year must be between 1500 and 2200")
+
+    prepared_files = []
+    request_size = 0
+    for upload in files:
+        data = await upload.read(max_file_size + 1)
+        filename, media_type, extension = validate_uploaded_file(upload.filename, data)
+        request_size += len(data)
+        if request_size > max_request_size:
+            raise HTTPException(status_code=413, detail="total file size per upload cannot exceed 100 MiB")
+        storage_key = f"{secrets.token_hex(24)}.{extension}"
+        prepared_files.append((filename, media_type, storage_key, data))
+
+    if feature_mode == "existing":
+        try:
+            selected_feature_id = int(feature_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="select an existing catalog object") from exc
+        new_feature_name = None
+        geometry_wkt = None
+        metadata = None
+    else:
+        new_feature_name = feature_name.strip()
+        if not new_feature_name:
+            raise HTTPException(status_code=422, detail="new catalog object needs a name")
+        if geometry_kind == "well":
+            try:
+                longitude_value, latitude_value = parse_coordinates(f"{longitude},{latitude}")
+            except HTTPException:
+                raise
+            geometry_wkt = None
+        elif geometry_kind == "area":
+            vertices = parse_polygon_vertices(polygon_vertices)
+            geometry_wkt = "POLYGON((" + ", ".join(f"{lon} {lat}" for lon, lat in vertices) + "))"
+            longitude_value = latitude_value = None
+        else:
+            raise HTTPException(status_code=422, detail="geometry kind must be a point or area")
+        try:
+            metadata = json.loads(feature_metadata or "{}")
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="feature metadata must be valid JSON") from exc
+        if not isinstance(metadata, dict):
+            raise HTTPException(status_code=422, detail="feature metadata must be a JSON object")
+        selected_feature_id = None
+
+    upload_root.mkdir(parents=True, exist_ok=True)
+    saved_paths = []
+    try:
+        for _, _, storage_key, data in prepared_files:
+            path = upload_root / storage_key
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            saved_paths.append(path)
+            with os.fdopen(descriptor, "wb") as stored_file:
+                stored_file.write(data)
+
+        try:
+            with get_connection() as connection:
+                if feature_mode == "existing":
+                    feature = connection.execute(
+                        "SELECT id, name FROM features WHERE id = %s",
+                        (selected_feature_id,),
+                    ).fetchone()
+                    if feature is None:
+                        raise HTTPException(status_code=404, detail="catalog object not found")
+                elif geometry_kind == "well":
+                    feature = connection.execute(
+                        """
+                        INSERT INTO features (name, kind, geom, metadata)
+                        VALUES (%s, 'well', ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s)
+                        RETURNING id, name
+                        """,
+                        (new_feature_name, longitude_value, latitude_value, json.dumps(metadata)),
+                    ).fetchone()
+                else:
+                    valid = connection.execute(
+                        "SELECT ST_IsValid(ST_GeomFromText(%s, 4326)) AS valid",
+                        (geometry_wkt,),
+                    ).fetchone()["valid"]
+                    if not valid:
+                        raise HTTPException(status_code=422, detail="area contour is self-intersecting or invalid")
+                    feature = connection.execute(
+                        """
+                        INSERT INTO features (name, kind, geom, metadata)
+                        VALUES (%s, 'area', ST_GeomFromText(%s, 4326), %s)
+                        RETURNING id, name
+                        """,
+                        (new_feature_name, geometry_wkt, json.dumps(metadata)),
+                    ).fetchone()
+
+                document = connection.execute(
+                    """
+                    INSERT INTO documents (
+                        title, inventory_number, region, year, topic, description, archive_reference
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        title,
+                        inventory_number.strip() or None,
+                        region.strip() or None,
+                        year,
+                        topic.strip() or None,
+                        description.strip() or None,
+                        archive_reference.strip() or None,
+                    ),
+                ).fetchone()
+                connection.execute(
+                    "INSERT INTO feature_documents (feature_id, document_id) VALUES (%s, %s)",
+                    (feature["id"], document["id"]),
+                )
+                for filename, media_type, storage_key, data in prepared_files:
+                    connection.execute(
+                        """
+                        INSERT INTO document_files (document_id, storage_key, original_filename, media_type, size_bytes)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (document["id"], storage_key, filename, media_type, len(data)),
+                    )
+        except UniqueViolation as exc:
+            raise HTTPException(status_code=409, detail="object name or inventory number already exists") from exc
+    except Exception:
+        for path in saved_paths:
+            path.unlink(missing_ok=True)
+        raise
+
+    return {
+        "feature_id": feature["id"],
+        "feature_name": feature["name"],
+        "document_id": document["id"],
+        "files": [{"filename": filename, "size_bytes": len(data)} for filename, _, _, data in prepared_files],
+    }
+
+
+@app.get("/api/files/{file_id}")
+def download_document_file(file_id: int):
+    with closing(get_connection()) as connection:
+        file = connection.execute(
+            """
+            SELECT storage_key, original_filename
+            FROM document_files
+            WHERE id = %s
+            """,
+            (file_id,),
+        ).fetchone()
+    if file is None or not re.fullmatch(r"[a-f0-9]{48}\.[a-z0-9]+", file["storage_key"]):
+        raise HTTPException(status_code=404, detail="file not found")
+    path = upload_root / file["storage_key"]
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="stored file is missing")
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename=file["original_filename"],
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @app.post("/auth/login")
@@ -450,6 +848,7 @@ def search_features(
     """
     with closing(get_connection()) as connection:
         rows = connection.execute(query, [*params, limit]).fetchall()
+        attach_document_files(connection, rows)
     features = []
     for row in rows:
         features.append(
@@ -493,6 +892,8 @@ def get_feature(feature_id: int):
             """,
             (feature_id,),
         ).fetchone()
+        if row is not None:
+            attach_document_files(connection, [row])
     if row is None:
         raise HTTPException(status_code=404, detail="feature not found")
     return {

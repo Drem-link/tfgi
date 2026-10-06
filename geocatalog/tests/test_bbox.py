@@ -39,6 +39,13 @@ class FakeAuthStore:
             }
         }
         self.next_id = 2
+        self.features = {}
+        self.documents = {}
+        self.files = {}
+        self.next_feature_id = 1
+        self.next_document_id = 1
+        self.next_file_id = 1
+        self.geo_feature_row = None
 
     def connect(self):
         return FakeConnection(self)
@@ -59,8 +66,98 @@ class FakeConnection:
 
     def execute(self, query, params=()):
         sql = " ".join(query.lower().split())
-        if sql.startswith("create table") or "pg_advisory_xact_lock" in sql:
+        if sql.startswith(("create table", "create index")) or "pg_advisory_xact_lock" in sql:
             return FakeResult([])
+        if sql.startswith("select st_isvalid"):
+            return FakeResult([{"valid": True}])
+        if sql.startswith("select f.id, f.name, f.kind, f.metadata"):
+            row = self.store.geo_feature_row
+            return FakeResult([row.copy()] if row else [])
+        if sql.startswith("select id, name from features where id"):
+            feature = self.store.features.get(params[0])
+            return FakeResult([feature.copy()] if feature else [])
+        if sql.startswith("insert into features"):
+            if "values (%s, 'well'," in sql:
+                name = params[0]
+                if any(item["name"] == name for item in self.store.features.values()):
+                    raise UniqueViolation("feature name already exists")
+                feature = {"id": self.store.next_feature_id, "name": name}
+            else:
+                name = params[0]
+                if any(item["name"] == name for item in self.store.features.values()):
+                    raise UniqueViolation("feature name already exists")
+                feature = {"id": self.store.next_feature_id, "name": name}
+            self.store.features[feature["id"]] = feature
+            self.store.next_feature_id += 1
+            return FakeResult([feature.copy()])
+        if sql.startswith("insert into documents"):
+            title, inventory_number, region, year, topic, description, archive_reference = params
+            if inventory_number and any(
+                item["inventory_number"] == inventory_number for item in self.store.documents.values()
+            ):
+                raise UniqueViolation("inventory number already exists")
+            document = {
+                "id": self.store.next_document_id,
+                "title": title,
+                "inventory_number": inventory_number,
+                "region": region,
+                "year": year,
+                "topic": topic,
+                "description": description,
+                "archive_reference": archive_reference,
+            }
+            self.store.documents[document["id"]] = document
+            self.store.next_document_id += 1
+            return FakeResult([{"id": document["id"]}])
+        if sql.startswith("insert into feature_documents"):
+            return FakeResult([])
+        if sql.startswith("insert into document_files"):
+            document_id, storage_key, filename, media_type, size_bytes = params
+            file = {
+                "id": self.store.next_file_id,
+                "document_id": document_id,
+                "storage_key": storage_key,
+                "original_filename": filename,
+                "media_type": media_type,
+                "size_bytes": size_bytes,
+            }
+            self.store.files[file["id"]] = file
+            self.store.next_file_id += 1
+            return FakeResult([{"id": file["id"]}])
+        if sql.startswith("select id, document_id, original_filename, size_bytes"):
+            document_ids = set(params[0])
+            return FakeResult(sorted(
+                [
+                    {
+                        "id": file["id"],
+                        "document_id": file["document_id"],
+                        "original_filename": file["original_filename"],
+                        "size_bytes": file["size_bytes"],
+                    }
+                    for file in self.store.files.values()
+                    if file["document_id"] in document_ids
+                ],
+                key=lambda file: file["original_filename"],
+            ))
+        if sql.startswith("select storage_key, original_filename from document_files"):
+            file = self.store.files.get(params[0])
+            return FakeResult([file.copy()] if file else [])
+        if sql.startswith("delete from document_files"):
+            file = self.store.files.pop(params[0], None)
+            return FakeResult([{"storage_key": file["storage_key"]}] if file else [])
+        if sql.startswith("select file.id, file.original_filename"):
+            result = []
+            for file in self.store.files.values():
+                document = self.store.documents[file["document_id"]]
+                feature = next(iter(self.store.features.values()))
+                result.append({
+                    "id": file["id"],
+                    "original_filename": file["original_filename"],
+                    "size_bytes": file["size_bytes"],
+                    "document_title": document["title"],
+                    "feature_name": feature["name"],
+                })
+            return FakeResult(result)
         if "where username = %s and is_active" in sql:
             user = next(
                 (item for item in self.store.users.values()
@@ -156,6 +253,103 @@ def test_offline_country_boundaries_are_bundled():
     assert len(data["features"]) >= 170
     assert all(feature["geometry"]["type"] in {"Polygon", "MultiPolygon"} for feature in data["features"])
     assert all(feature["properties"].get("ADMIN") for feature in data["features"])
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected_type"),
+    [
+        ("report.pdf", b"%PDF-1.7 test", "application/pdf"),
+        ("photo.JPG", b"\xff\xd8\xff\x00", "image/jpeg"),
+        ("scan.png", b"\x89PNG\r\n\x1a\nrest", "image/png"),
+        ("notes.txt", b"archive text", "text/plain"),
+        ("table.csv", b"year,title\n2025,Report\n", "text/csv"),
+    ],
+)
+def test_upload_file_type_validation(filename, content, expected_type):
+    safe_name, media_type, extension = main_module.validate_uploaded_file(filename, content)
+
+    assert safe_name == filename
+    assert media_type == expected_type
+    assert extension == filename.rsplit(".", 1)[1].lower()
+
+
+def test_document_files_are_attached_to_geojson_documents():
+    store = FakeAuthStore("catalog-admin", "unused")
+    store.files = {
+        1: {
+            "id": 1,
+            "document_id": 17,
+            "original_filename": "report.pdf",
+            "size_bytes": 1234,
+        },
+        2: {
+            "id": 2,
+            "document_id": 17,
+            "original_filename": "notes.txt",
+            "size_bytes": 42,
+        },
+    }
+    row = {"documents": [{"id": 17, "title": "Survey"}]}
+
+    main_module.attach_document_files(FakeConnection(store), [row])
+
+    assert row["documents"][0]["files"] == [
+        {"id": 2, "filename": "notes.txt", "size_bytes": 42},
+        {"id": 1, "filename": "report.pdf", "size_bytes": 1234},
+    ]
+
+
+def test_feature_detail_includes_downloadable_document_metadata(auth_client):
+    auth_client.test_store.geo_feature_row = {
+        "id": 7,
+        "name": "Existing site",
+        "kind": "well",
+        "metadata": {},
+        "geometry": {"type": "Point", "coordinates": [150.8, 59.56]},
+        "documents": [{"id": 17, "title": "Survey"}],
+    }
+    auth_client.test_store.files[1] = {
+        "id": 1,
+        "document_id": 17,
+        "original_filename": "report.pdf",
+        "size_bytes": 1234,
+    }
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+
+    response = auth_client.get("/api/features/7")
+
+    assert response.status_code == 200
+    assert response.json()["properties"]["documents"][0]["files"] == [
+        {"id": 1, "filename": "report.pdf", "size_bytes": 1234}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("script.exe", b"MZ"),
+        ("fake.pdf", b"<html>not a pdf</html>"),
+        ("fake.docx", b"PK but not an office zip"),
+        ("bad.txt", b"\x00binary"),
+    ],
+)
+def test_upload_rejects_unsupported_or_mismatched_file(filename, content):
+    with pytest.raises(HTTPException) as error:
+        main_module.validate_uploaded_file(filename, content)
+    assert error.value.status_code == 415
+
+
+def test_polygon_vertices_are_checked_and_closed():
+    vertices = main_module.parse_polygon_vertices("150.8,59.5;151.2,59.5;151.2,60")
+
+    assert len(vertices) == 4
+    assert vertices[0] == vertices[-1]
+    with pytest.raises(HTTPException):
+        main_module.parse_polygon_vertices("150.8,59.5; 151.2,95; 151.2,60")
 
 
 def test_magadan_demo_migration_adds_two_document_linked_points():
@@ -255,6 +449,211 @@ def test_admin_can_create_and_manage_a_viewer(auth_client):
     assert auth_client.get("/api/session").json()["role"] == "viewer"
     assert auth_client.get("/api/admin/users").status_code == 403
     assert auth_client.get("/admin/users", follow_redirects=False).status_code == 303
+
+
+def test_admin_uploads_files_with_a_new_point_and_downloads_them(auth_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "upload_root", tmp_path)
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+    response = auth_client.post(
+        "/api/admin/documents",
+        data={
+            "feature_mode": "new",
+            "feature_name": "North borehole",
+            "geometry_kind": "well",
+            "longitude": "150.8",
+            "latitude": "59.56",
+            "feature_metadata": "{}",
+            "document_title": "Survey report",
+            "inventory_number": "INV-001",
+            "region": "Magadan",
+            "document_year": "2025",
+        },
+        files=[
+            ("files", ("survey.pdf", b"%PDF-1.7 test content", "application/pdf")),
+            ("files", ("notes.txt", b"field notes", "text/plain")),
+        ],
+        headers={"Origin": "https://catalog.test"},
+    )
+
+    assert response.status_code == 201
+    assert len(response.json()["files"]) == 2
+    assert len(auth_client.test_store.features) == 1
+    assert len(auth_client.test_store.documents) == 1
+    assert len(auth_client.test_store.files) == 2
+
+    file_id, file_info = next(iter(auth_client.test_store.files.items()))
+    downloaded = auth_client.get(f"/api/files/{file_id}")
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"%PDF-1.7 test content"
+    assert downloaded.headers["content-type"] == "application/octet-stream"
+    assert "attachment" in downloaded.headers["content-disposition"]
+    assert (tmp_path / file_info["storage_key"]).exists()
+
+
+def test_admin_can_add_a_document_to_an_existing_object(auth_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "upload_root", tmp_path)
+    auth_client.test_store.features[7] = {"id": 7, "name": "Existing site"}
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+    response = auth_client.post(
+        "/api/admin/documents",
+        data={
+            "feature_mode": "existing",
+            "feature_id": "7",
+            "document_title": "Existing-site report",
+        },
+        files={"files": ("report.pdf", b"%PDF-1.7 test", "application/pdf")},
+        headers={"Origin": "https://catalog.test"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["feature_id"] == 7
+    assert list(auth_client.test_store.features) == [7]
+    assert len(auth_client.test_store.documents) == 1
+
+
+def test_admin_can_create_area_with_document(auth_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "upload_root", tmp_path)
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+    response = auth_client.post(
+        "/api/admin/documents",
+        data={
+            "feature_mode": "new",
+            "feature_name": "Survey area",
+            "geometry_kind": "area",
+            "polygon_vertices": "150.8,59.5;151.2,59.5;151.2,60",
+            "document_title": "Area report",
+        },
+        files={"files": ("report.pdf", b"%PDF-1.7 test", "application/pdf")},
+        headers={"Origin": "https://catalog.test"},
+    )
+
+    assert response.status_code == 201
+    assert auth_client.test_store.features[1]["name"] == "Survey area"
+    assert len(auth_client.test_store.documents) == 1
+
+
+def test_upload_database_failure_removes_written_files(auth_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "upload_root", tmp_path)
+    auth_client.test_store.features[7] = {"id": 7, "name": "Taken name"}
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+    response = auth_client.post(
+        "/api/admin/documents",
+        data={
+            "feature_mode": "new",
+            "feature_name": "Taken name",
+            "geometry_kind": "well",
+            "longitude": "150.8",
+            "latitude": "59.56",
+            "document_title": "Conflicting report",
+        },
+        files={"files": ("report.pdf", b"%PDF-1.7 test", "application/pdf")},
+        headers={"Origin": "https://catalog.test"},
+    )
+
+    assert response.status_code == 409
+    assert list(tmp_path.iterdir()) == []
+    assert not auth_client.test_store.documents
+
+
+def test_viewer_cannot_upload_files(auth_client):
+    auth_client.test_store.users[2] = {
+        "id": 2,
+        "username": "viewer",
+        "password_hash": PasswordHasher().hash("viewer-password-2026"),
+        "role": "viewer",
+        "is_active": True,
+        "token_version": 0,
+        "created_at": datetime.now(timezone.utc),
+    }
+    auth_client.post(
+        "/auth/login",
+        data={"username": "viewer", "password": "viewer-password-2026"},
+        follow_redirects=False,
+    )
+    response = auth_client.post(
+        "/api/admin/documents",
+        files={"files": ("report.pdf", b"%PDF-1.7 test", "application/pdf")},
+        headers={"Origin": "https://catalog.test"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_viewer_can_download_uploaded_file(auth_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "upload_root", tmp_path)
+    stored_name = "b" * 48 + ".pdf"
+    (tmp_path / stored_name).write_bytes(b"%PDF-1.7 test")
+    auth_client.test_store.files[1] = {
+        "id": 1,
+        "document_id": 1,
+        "storage_key": stored_name,
+        "original_filename": "report.pdf",
+        "media_type": "application/pdf",
+        "size_bytes": 12,
+    }
+    auth_client.test_store.users[2] = {
+        "id": 2,
+        "username": "viewer",
+        "password_hash": PasswordHasher().hash("viewer-password-2026"),
+        "role": "viewer",
+        "is_active": True,
+        "token_version": 0,
+        "created_at": datetime.now(timezone.utc),
+    }
+    auth_client.post(
+        "/auth/login",
+        data={"username": "viewer", "password": "viewer-password-2026"},
+        follow_redirects=False,
+    )
+
+    response = auth_client.get("/api/files/1")
+
+    assert response.status_code == 200
+    assert response.content == b"%PDF-1.7 test"
+
+
+def test_admin_can_delete_uploaded_file(auth_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "upload_root", tmp_path)
+    stored_name = "a" * 48 + ".pdf"
+    stored_path = tmp_path / stored_name
+    stored_path.write_bytes(b"%PDF-1.7 test")
+    auth_client.test_store.files[1] = {
+        "id": 1,
+        "document_id": 1,
+        "storage_key": stored_name,
+        "original_filename": "report.pdf",
+        "media_type": "application/pdf",
+        "size_bytes": 12,
+    }
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+
+    deleted = auth_client.delete(
+        "/api/admin/files/1",
+        headers={"Origin": "https://catalog.test"},
+    )
+
+    assert deleted.status_code == 204
+    assert not stored_path.exists()
 
 
 def test_admin_can_reset_password_and_revoke_existing_session(auth_client):

@@ -38,6 +38,7 @@ services:
       - /tls/tls.key
     volumes:
       - ./tls:/tls:ro
+      - ./data/uploads:/uploads
     depends_on:
       db:
         condition: service_healthy

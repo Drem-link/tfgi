@@ -16,7 +16,8 @@
       </div>
     </div>
     <div class="header-actions">
-      <span class="user-label">● ЗАКРЫТЫЙ КАТАЛОГ</span>
+      <span id="user-label" class="user-label">● ЗАКРЫТЫЙ КАТАЛОГ</span>
+      <a id="catalog-admin-link" class="header-link" href="/admin/catalog" hidden>Добавить данные</a>
       <a id="user-admin-link" class="header-link" href="/admin/users" hidden>Пользователи</a>
       <button id="logout" class="ghost-button" type="button">Выйти</button>
       <form id="logout-form" method="post" action="/auth/logout" hidden></form>
