@@ -4,50 +4,133 @@
   color: #f2d0b2;
   background: #070b1c;
 }
+
 * { box-sizing: border-box; }
-body {
+body { min-width: 320px; min-height: 100vh; margin: 0; }
+.login-layout {
   display: grid;
   min-height: 100vh;
-  margin: 0;
+  grid-template-columns: minmax(0, 1.4fr) minmax(390px, .6fr);
+  background: #070b1c;
+}
+.map-panel {
+  position: relative;
+  display: flex;
+  min-height: 680px;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  padding: 28px clamp(24px, 4vw, 64px);
+  background: radial-gradient(ellipse at 48% 46%, #172043 0%, #0b1227 58%, #070b1c 100%);
+}
+#login-globe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.map-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(7, 11, 28, .08) 55%, rgba(7, 11, 28, .48));
+  pointer-events: none;
+}
+.map-heading, .map-caption, .map-readout { position: relative; z-index: 1; }
+.map-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.brand { display: flex; align-items: center; gap: 12px; color: #fff0dd; font-size: .78rem; font-weight: 700; letter-spacing: .1em; text-decoration: none; }
+.brand-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
   place-items: center;
-  padding: 24px;
-  background: radial-gradient(ellipse at 50% 35%, #172043, #070b1c 70%);
+  border: 1px solid #7770c0;
+  border-radius: 10px;
+  color: #f2c5a5;
+  font-size: 1.6rem;
 }
-.login-card {
-  width: min(100%, 430px);
-  padding: 38px;
-  border: 1px solid #817bd1;
-  background: rgba(11, 16, 37, .94);
-  box-shadow: 0 22px 70px #0008;
+.brand small { display: block; margin-top: 6px; color: #999fbe; font-size: .55rem; font-weight: 400; letter-spacing: .15em; }
+.map-status { display: flex; align-items: center; gap: 8px; color: #a9acc4; font-size: .6rem; letter-spacing: .12em; white-space: nowrap; }
+.map-status i { width: 7px; height: 7px; border-radius: 50%; background: #94d8bf; box-shadow: 0 0 10px #94d8bf; }
+.map-caption { margin: auto 0 42px; padding-top: 80px; }
+.eyebrow { margin: 0 0 10px; color: #b6b2ef; font-size: .64rem; letter-spacing: .18em; }
+.map-caption h2 { margin: 0; color: #fff0dd; font-size: clamp(1.5rem, 3vw, 2.5rem); line-height: 1.3; }
+.map-caption > p:last-child { margin: 14px 0 0; color: #a9acc4; font-size: .78rem; line-height: 1.7; }
+.map-readout { color: #8d93b2; font-size: .58rem; letter-spacing: .12em; }
+.form-panel {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(30px, 5vw, 76px);
+  border-left: 1px solid #303858;
+  background: rgba(11, 16, 37, .98);
 }
-.mark { color: #f2c5a5; font-size: 2.2rem; }
-.eyebrow { margin: 22px 0 8px; color: #b6b2ef; font-size: .72rem; letter-spacing: .18em; }
-h1 { margin: 0; color: #fff0dd; font-size: 1.55rem; }
-.subtitle { color: #a9acc4; line-height: 1.55; }
-form { display: grid; gap: 10px; margin-top: 28px; }
-label { margin-top: 8px; color: #c5c2df; font-size: .85rem; }
+.login-card { width: min(100%, 400px); margin: auto; }
+.login-card > .eyebrow { margin-bottom: 12px; color: #9790e6; }
+h1 { margin: 0; color: #fff0dd; font-size: clamp(1.45rem, 2vw, 1.8rem); }
+.subtitle { margin: 12px 0 30px; color: #a9acc4; font-size: .76rem; line-height: 1.65; }
+form { display: grid; gap: 10px; }
+label { margin-top: 8px; color: #c5c2df; font-size: .76rem; }
 input {
   width: 100%;
-  min-height: 46px;
-  padding: 10px 12px;
+  min-height: 48px;
+  padding: 11px 13px;
   border: 1px solid #3f476b;
-  border-radius: 3px;
+  border-radius: 5px;
   outline: none;
   background: #0d1328;
   color: #fff0dd;
   font: inherit;
+  font-size: .78rem;
 }
-input:focus { border-color: #b6b2ef; }
-button {
-  min-height: 46px;
-  margin-top: 16px;
+input:focus { border-color: #b6b2ef; box-shadow: 0 0 0 3px rgba(151, 144, 230, .12); }
+button[type="submit"] {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding: 0 15px;
   border: 1px solid #f2c5a5;
-  border-radius: 3px;
+  border-radius: 5px;
   background: #f2c5a5;
   color: #101329;
   font: inherit;
+  font-size: .78rem;
   font-weight: 700;
   cursor: pointer;
 }
-.error { color: #ff9d9d; }
-.secure-note { margin: 22px 0 0; color: #8187a7; font-size: .72rem; line-height: 1.5; }
+button[type="submit"]:hover { background: #f7d6bd; }
+button[type="submit"]:disabled { cursor: wait; opacity: .7; }
+.error { margin: 7px 0 0; color: #ff9d9d; font-size: .74rem; line-height: 1.5; }
+.login-progress { margin: 15px 0 0; color: #c7c5ff; font-size: .72rem; line-height: 1.5; }
+.secure-note { margin: 27px 0 0; color: #858ca9; font-size: .62rem; line-height: 1.65; }
+.secure-note span { margin-right: 5px; color: #94d8bf; }
+.form-panel footer { width: min(100%, 400px); margin: 25px auto 0; color: #777f9e; font-size: .6rem; line-height: 1.6; }
+.is-flying .login-card { animation: form-away .65s ease forwards; }
+.is-flying .map-caption { animation: caption-away .45s ease forwards; }
+@keyframes form-away { to { opacity: 0; transform: translateX(24px); } }
+@keyframes caption-away { to { opacity: 0; transform: translateY(10px); } }
+@media (max-width: 900px) {
+  .login-layout { grid-template-columns: minmax(0, 1.1fr) minmax(350px, .9fr); }
+  .map-panel { padding: 24px; }
+  .form-panel { padding: 34px; }
+}
+@media (max-width: 680px) {
+  .login-layout { grid-template-columns: 1fr; }
+  .map-panel { min-height: 43vh; padding: 19px 20px; }
+  .brand { font-size: .66rem; }
+  .brand-mark { width: 35px; height: 35px; font-size: 1.3rem; }
+  .brand small { font-size: .48rem; }
+  .map-status { font-size: .52rem; }
+  .map-caption { margin-bottom: 23px; padding-top: 80px; }
+  .map-caption h2 { font-size: 1.45rem; }
+  .map-caption > p:last-child { margin-top: 8px; font-size: .68rem; }
+  .form-panel { min-height: 57vh; padding: 34px 24px 26px; border-top: 1px solid #303858; border-left: 0; }
+  .login-card { margin: 0 auto; }
+  .subtitle { margin-bottom: 18px; }
+  .form-panel footer { margin-top: 20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; }
+}

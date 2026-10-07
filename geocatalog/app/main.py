@@ -133,7 +133,15 @@ def authenticated_user(request: Request) -> dict | None:
 
 
 def is_public_path(path: str) -> bool:
-    return path in {"/login", "/auth/login", "/healthz", "/livez", "/static/login.css", "/static/login.js"}
+    return path in {
+        "/login",
+        "/auth/login",
+        "/healthz",
+        "/livez",
+        "/static/login.css",
+        "/static/login.js",
+        "/static/ne_110m_admin_0_countries.geojson",
+    }
 
 
 @app.middleware("http")

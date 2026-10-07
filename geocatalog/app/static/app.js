@@ -6,7 +6,7 @@ const count = document.querySelector("#result-count");
 const featureCount = document.querySelector("#feature-count");
 const tooltip = document.querySelector("#globe-tooltip");
 let features = [];
-let rotation = { longitude: 38, latitude: 54 };
+let rotation = { longitude: 150.8, latitude: 59.56 };
 let zoom = 1;
 let targetZoom = 1;
 let dragging = false;
@@ -597,7 +597,7 @@ document.querySelector("#globe-reset").addEventListener("click", () => {
   hoveredGroup = null;
   selectionPanel.hidden = true;
   targetZoom = 1;
-  rotation = { longitude: 38, latitude: 54 };
+  rotation = { longitude: 150.8, latitude: 59.56 };
   for (const card of results.children) {
     card.classList.remove("selected");
     card.setAttribute("aria-pressed", "false");

@@ -396,6 +396,7 @@ def test_catalog_requires_authentication(auth_client):
     assert api.headers["cache-control"] == "no-store"
     assert auth_client.get("/static/app.js", follow_redirects=False).status_code == 303
     assert auth_client.get("/static/login.css").status_code == 200
+    assert auth_client.get("/static/ne_110m_admin_0_countries.geojson").status_code == 200
 
 
 def test_login_sets_secure_http_only_session(auth_client):
