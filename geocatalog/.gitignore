@@ -1,4 +1,6 @@
+/.secrets/
 .env
+/tls/
 /data/
 __pycache__/
 .pytest_cache/

@@ -31,7 +31,12 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pytest -q
       - name: Check browser JavaScript
-        run: node --check geocatalog/app/static/app.js
+        run: |
+          node --check geocatalog/app/static/app.js
+          node --check geocatalog/app/static/login.js
+          node --check geocatalog/app/static/users.js
+          node --check geocatalog/app/static/catalog-admin.js
+          python -m json.tool geocatalog/app/static/ne_110m_admin_0_countries.geojson > /dev/null
 
   build:
     needs: test

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Геологический каталог</title>
+  <link rel="stylesheet" href="/static/login.css">
+</head>
+<body>
+  <main class="login-layout">
+    <section class="map-panel" aria-label="Карта мира с отметкой Магадана">
+      <canvas id="login-globe" aria-label="Точечный глобус, который приблизится к Магадану после входа"></canvas>
+      <div class="map-shade"></div>
+      <div class="map-heading">
+        <a class="brand" href="/login" aria-label="Геологический каталог">
+          <span class="brand-mark" aria-hidden="true">◉</span>
+          <span>ГЕОЛОГИЧЕСКИЙ КАТАЛОГ<small>ГЕОДАННЫЕ · ДОКУМЕНТЫ · АРХИВ</small></span>
+        </a>
+        <span class="map-status"><i></i> ЗАЩИЩЁННАЯ СИСТЕМА</span>
+      </div>
+      <div class="map-readout" id="login-map-readout">.</div>
+    </section>
+    <section class="form-panel">
+      <div class="login-card">
+        <p class="eyebrow">ВНУТРЕННИЙ ДОСТУП</p>
+        <h1>Войти в каталог</h1>
+        <p class="subtitle">Используйте выданные администратором имя пользователя и пароль.</p>
+        <form id="login-form" method="post" action="/auth/login" autocomplete="on">
+          <label for="username">Имя пользователя</label>
+          <input id="username" name="username" autocomplete="username" required maxlength="128" autofocus>
+          <label for="password">Пароль</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+          <p id="login-error" class="error" role="alert" hidden></p>
+          <button id="login-submit" type="submit">Войти и открыть карту <span aria-hidden="true">→</span></button>
+        </form>
+        <p id="login-progress" class="login-progress" role="status" aria-live="polite" hidden></p>
+        <p class="secure-note"><span aria-hidden="true">●</span> HTTPS · Не вводите пароль, если браузер предупреждает о сертификате.</p>
+      </div>
+      <footer>Нет доступа или забыли пароль? Обратитесь к администратору каталога.</footer>
+    </section>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>

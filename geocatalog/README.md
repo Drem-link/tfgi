@@ -1,83 +1,164 @@
-# Геологический каталог — MVP
+# Геологический каталог
 
-Внутренний прототип каталога геологических материалов: поиск по текстовым метаданным, региону и году; отображение геологических объектов (точки, полигоны и линии) на карте; просмотр связанных документов при выборе объекта.
+Внутренний MVP геологической библиотеки: текстовый поиск по метаданным, геометрии PostGIS, вращаемый orthographic 3D-глобус с координатной сеткой, маркерами и контурами, связанные документы и управляемые администратором учётные записи.
 
-## Локальный запуск
+## Модель и интерфейс
 
-Требуются Docker Compose и свободный localhost-порт 8080. Каталог `data/postgres` содержит постоянные локальные данные и исключён из Git.
+- `features`: исходная геометрия (`source_geom`, `source_crs`) и, только когда CRS — WGS 84, геометрия глобуса `geom` в EPSG:4326.
+- `documents`: основные поля каталога плюс номер ТГФ, вид документа, авторы/соавторы, организация-исполнитель, период работ, место составления, полезные ископаемые, носитель, состав/объём, статус электронной копии и ссылка/ID ЕФГИ.
+- `feature_documents`: связь many-to-many между объектами на глобусе и документами.
+- `document_relations`: отдельные связи между карточками документов (связанный документ, приложение, протокол, карта, копия).
+- `saved_searches`: личные подборки поиска, видимые только их владельцу.
+- `catalog_audit`: действия администратора над документами, импортами, связями и вложениями; пароли и содержимое файлов туда не записываются.
+- `GET /api/features?q=&region=&year_from=&year_to=` возвращает отфильтрованный GeoJSON FeatureCollection.
+- `GET /api/features/{id}` возвращает геометрию и связанные документы.
+- При нажатии на маркер глобус плавно приближает выбранный объект и показывает координаты с связанными документами. Список документов объекта также выделяется в каталоге.
+- Координаты новой записи вводятся с явной CRS. Форма по умолчанию использует ГСК-2011 (EPSG:7683): исходные координаты хранятся в PostGIS, но `geom` остаётся `NULL`, поэтому объект виден в каталоге и проверках качества, но не наносится на WGS 84 глобус. WGS 84 (EPSG:4326) нужно выбирать только для координат, которые действительно заданы в этой CRS. EPSG:9773 автоматически не применяется.
+- Глобус рисуется локально Canvas 2D: материки показаны точечной подложкой, вращение мышью/касанием, масштаб колёсиком, центрирование по выбранному объекту. Географическая подложка — локальная копия Natural Earth 1:110m Admin 0, общедоступные данные Public Domain; внешние картографические тайлы/CDN не используются.
+- Точечная географическая подложка схематична и не подходит для кадастровой, юридической или геодезической точности. На глобусе также показываются координатная сетка и геологические объекты из каталога.
+- Администратор загружает документы через «Файлы» → «Добавить»: можно создать точку/площадь или выбрать существующий объект и указать метаданные документа. К одному документу прикрепляется до 10 файлов за раз.
+- В «Файлы» доступны редактирование JSON-карточки, связи документов, предпросмотр и атомарное подтверждение импорта CSV/XLSX (первый лист, не более 1000 строк и 5 MiB; формулы в XLSX запрещены), отчёт качества и журнал последних действий. Повторно импортированная строка CSV/XLSX определяется fingerprint и пропускается; конфликт фондовых номеров откатывает весь пакет. CSV-экспорт сохраняет исходные координаты и CRS и подходит для повторного импорта. Значения, начинающиеся с символов формулы, экспортируются с защитным табулятором.
+- Формат импорта: обязательные колонки `feature_name`, `geometry_kind` (`well`, `area`, `site` или `other`), `coordinate_crs` (`EPSG:7683` или `EPSG:4326`), `document_title`; для точки — `longitude`/`latitude` либо `source_wkt` (`POINT(...)`), для контура — `polygon_vertices` либо `source_wkt` (`POLYGON((...))`). Дополнительные заголовки: `inventory_number`, `tgf_number`, `region`, `year`, `topic`, `description`, `archive_reference`, `document_type`, `authors`, `coauthors`, `executor_org`, `work_year_start`, `work_year_end`, `created_place`, `minerals`, `archive_disk_number`, `material_composition`, `electronic_copy_status`, `efgi_id`, `efgi_url`.
+- Для существующей PostGIS-установки приложение при старте применяет идемпотентное расширение схемы; исходный SQL миграции — `sql/004_catalog_expansion.sql`. Старые геометрии сохраняются как EPSG:4326 и копируются в поле исходной CRS без изменения координат. Миграция не удаляет таблицы, PVC, файлы или данные.
+- ЕФГИ подключён как поле официального внешнего ID/URL; автоматический импорт из ЕФГИ не включён без подтверждённого открытого API и условий доступа. Синхронизация между офисами также не включена.
+- Разрешены PDF, JPG/JPEG, PNG, TIFF, DOCX, XLSX, PPTX, TXT и CSV; допустимые расширения проверяются вместе с сигнатурой/структурой содержимого. Лимит — 50 MiB на файл и 100 MiB на одну загрузку. Старые форматы Office и исполняемые файлы не принимаются.
+- Файлы доступны для скачивания всем вошедшим пользователям; создание и удаление файлов доступны только администраторам. Они хранятся отдельно от PostGIS в `/uploads`, под случайными именами, а в базе остаются метаданные. Синтетические seed-записи начинаются с `[DEMO]`; это не архивные данные.
 
-```bash
-cd geocatalog
-printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .env
-docker compose up --build -d
+## Структура проекта
+
+```text
+tfgi/
+├── .github/workflows/
+│   └── geocatalog-image.yml       # CI: тесты, проверки JS и сборка/публикация образа
+└── geocatalog/
+    ├── app/
+    │   ├── main.py                # FastAPI: API, авторизация, каталог и файлы
+    │   ├── auth_cli.py            # безопасная подготовка начальной учётной записи
+    │   └── static/                # HTML, CSS, JS и локальная географическая подложка
+    ├── sql/                       # схема и SQL начальных/демонстрационных данных
+    ├── k8s/                       # Kubernetes-манифесты
+    ├── tests/                     # API и логические тесты
+    ├── Dockerfile                 # сборка контейнера приложения
+    ├── compose.yaml               # локальный запуск приложения и PostGIS
+    ├── requirements.txt           # зависимости приложения
+    ├── requirements-dev.txt       # зависимости разработки и тестов
+    ├── pyproject.toml             # настройки Python-инструментов
+    └── README.md                  # документация проекта
 ```
 
-Откройте <http://127.0.0.1:8080>. В пустую базу при первом запуске автоматически добавляются два явно помеченных синтетических объекта и демонстрационные документы. Проверка здоровья API: <http://127.0.0.1:8080/healthz>.
+`k8s/namespace.yaml` создаёт пространство имён `geocatalog`. `k8s/postgis.yaml` описывает постоянный том базы, PVC, внутренний Service и Deployment PostGIS. `k8s/app.yaml` описывает постоянный том файлов, PVC, внешний NodePort Service и Deployment приложения. Kubernetes-манифесты задают желаемое состояние кластера; `kubectl apply` приводит ресурсы к этому состоянию.
 
-## Модель данных и API
+`.github/workflows/geocatalog-image.yml` — workflow GitHub Actions, не Kubernetes-манифест: он запускает тесты и проверки, затем собирает и публикует контейнерный образ. `Dockerfile` определяет содержимое этого образа. `compose.yaml` предназначен для локального запуска и не управляет серверным Kubernetes.
 
-- `features`: геометрия PostGIS в EPSG:4326, имя и тип объекта.
-- `documents`: библиографические метаданные, регион, год, тема, архивный шифр и текстовое описание.
-- `feature_documents`: связь many-to-many между объектами на карте и материалами.
-- `GET /api/features?q=&region=&year_from=&year_to=&bbox=` возвращает GeoJSON FeatureCollection с подходящими документами.
-- `GET /api/features/{id}` возвращает объект и все связанные документы.
+В `sql/001_schema.sql` находится исходная схема таблиц и индексов, `002_demo_data.sql` — начальные данные, а `003_magadan_demo_points.sql` — повторно применяемая SQL-миграция демонстрационных точек. Скрипты `001` и `002` выполняются Postgres entrypoint только при инициализации пустого каталога базы; для уже работающей базы изменения схемы и данных применяются отдельными миграциями.
 
-Для раннего прототипа данные можно добавлять через SQL с `ST_GeomFromGeoJSON`, например через доступ к контейнеру БД. У API намеренно нет публичного интерфейса записи/загрузки файлов.
+## Вход и HTTPS
 
-## Ограничения перед реальным развёртыванием
+Kubernetes pod слушает только HTTPS. NodePort `30808` обслуживает TLS на `https://192.168.1.241:30808`; сертификат подписан локальным CA. Перед вводом пароля установите `ca.crt` в доверенные корневые CA устройства и убедитесь, что браузер не предупреждает о сертификате. Не обходите TLS-предупреждение: Secure cookie и пароль предназначены только для HTTPS.
 
-- Приложение пока не имеет аутентификации и авторизации: Compose публикует порт только на loopback. Не выставляйте его в LAN/интернет до интеграции с аутентификацией и TLS.
-- Карта и её CSS/JS пока загружаются с публичных OpenStreetMap и unpkg CDN. Запросы тайлов идут от браузера к внешнему серверу и раскрывают просматриваемый район. Не используйте реальные чувствительные координаты, пока не подключены согласованный внутренний tile-сервер и локальные копии библиотек карты.
-- Не загружайте закрытые документы в прототип. Поле `archive_reference` — только ссылка/шифр, не содержимое файла.
-- В Kubernetes нужны отдельные PVC/том для базы, Secret для пароля, NetworkPolicy, внутренний доступ, TLS и резервное копирование/проверка восстановления.
-- Схема SQL запускается автоматически только при первом создании пустого каталога Postgres. Для последующих изменений используйте миграции, не удаляйте `data/postgres`.
+Авторизация: Argon2id password hashes, signed session cookie (8 часов, HttpOnly/Secure/SameSite=Strict) и ограничение неудачных попыток. Учётная запись из Kubernetes Secret создаётся в PostGIS при первом старте приложения, если такого логина ещё нет. Администратор управляет отдельными учётками в разделе «Пользователи»: роль `viewer` даёт поиск, просмотр и скачивание файлов, `admin` дополнительно управляет учётными записями и файлами. Администратор может менять роли, отключать учётки и сбрасывать пароли; саморегистрации нет, пароль пользователя нельзя просмотреть. Нельзя отключить или понизить последнего активного администратора. Не публикуйте NodePort через WAN/MikroTik и не используйте демо-секреты/пароли.
 
-## Kubernetes (однонодовый прототип)
+Страница входа показывает офлайн-точечный глобус. После успешной авторизации он анимированно центрируется на Магадане, затем открывается каталог, изначально наведённый на тот же регион. Неверный пароль не запускает переход и показывает обычное сообщение об ошибке.
 
-Манифесты в `k8s/` рассчитаны на текущую ноду `zabbix` и отдельный каталог `/var/lib/containers/k8s-app-data/postgis`. PV имеет `Retain`, но `20Gi` в hostPath — декларативная ёмкость, не дисковая квота. Сервис базы и веб-сервис имеют тип `ClusterIP`; никаких NodePort/Ingress манифесты не создают.
+### Kubernetes deployment (RED OS single-node)
 
-Перед запуском проверьте доступную память ноды и доставьте каталог `geocatalog/` на сервер. На сервере от root подготовьте каталог данных и его владельца (образ PostGIS работает как UID/GID 999):
+Обновите ветку и дождитесь успешного workflow `Geological catalog image`. На сервере из каталога `geocatalog/`:
 
 ```bash
-install -d -o 999 -g 999 -m 700 /var/lib/containers/k8s-app-data/postgis
-restorecon -Rv /var/lib/containers/k8s-app-data/postgis
-kubectl apply -f k8s/namespace.yaml
-kubectl -n geocatalog create secret generic geocatalog-db \
-  --from-literal=PGPASSWORD="$(openssl rand -hex 32)"
-kubectl -n geocatalog create configmap geocatalog-schema \
-  --from-file=001_schema.sql=sql/001_schema.sql \
-  --from-file=002_demo_data.sql=sql/002_demo_data.sql
-kubectl apply -f k8s/postgis.yaml
+umask 077
+install -d -m 700 /root/geocatalog-tls
+cd /root/geocatalog-tls
+
+# Создать локальный CA и сертификат сервера с IP SAN.
+openssl genrsa -out ca.key 3072
+openssl req -x509 -new -key ca.key -sha256 -days 3650 \
+  -subj "/CN=Geological Catalog Local CA" -out ca.crt
+openssl req -new -newkey rsa:3072 -nodes \
+  -keyout tls.key -out tls.csr -subj "/CN=192.168.1.241"
+printf 'subjectAltName=IP:192.168.1.241\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n' > tls.ext
+openssl x509 -req -in tls.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out tls.crt -days 365 -sha256 -extfile tls.ext
+
+kubectl -n geocatalog create secret tls geocatalog-tls \
+  --cert=tls.crt --key=tls.key --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Образ собирается GitHub Actions после push в ветку `feature/geological-map-mvp`; сборка и тесты не требуют Podman на сервере. Дождитесь успешного workflow **Geological catalog image**. Если GitHub создал GHCR package как private, переключите package visibility на public перед pull на сервере (в репозитории нет секретных данных, но приложение всё равно пока без аутентификации).
+Создайте файлы учётной записи интерактивно, не вводя пароль аргументом команды. Запустите CLI из локального venv с зависимостями `requirements.txt`:
 
 ```bash
+python -m venv /tmp/geocatalog-admin-venv
+/tmp/geocatalog-admin-venv/bin/pip install -r requirements.txt
+/tmp/geocatalog-admin-venv/bin/python -m app.auth_cli --output-dir /root/geocatalog-auth
+kubectl -n geocatalog create secret generic geocatalog-auth \
+  --from-file=/root/geocatalog-auth/AUTH_USERNAME \
+  --from-file=/root/geocatalog-auth/AUTH_PASSWORD_HASH \
+  --from-file=/root/geocatalog-auth/SESSION_SECRET \
+  --dry-run=client -o yaml | kubectl apply -f -
+rm /root/geocatalog-auth/AUTH_USERNAME /root/geocatalog-auth/AUTH_PASSWORD_HASH /root/geocatalog-auth/SESSION_SECRET
+```
+
+`auth_cli` спросит username и дважды пароль длиной от 8 символов; пароль не выводится. При первом старте приложение переносит эту учётку в таблицу `geocatalog_users` с ролью администратора. После этого создание коллег выполняется через ссылку «Пользователи» в интерфейсе; Kubernetes Secret служит только для начального администратора и подписи сессий. `ca.key` и `tls.key` должны оставаться закрытыми (root-only); раздавайте клиентам только публичный `ca.crt` доверенным каналом. Установите CA на клиентский компьютер, затем проверьте/откройте `https://192.168.1.241:30808`.
+
+Образ собирается GitHub Actions. На сервере из checkout нужной ветки:
+
+```bash
+install -d -o 10001 -g 10001 -m 0770 /var/lib/containers/k8s-app-data/geocatalog-uploads
+# При SELinux Enforcing настройте для этого каталога постоянную метку,
+# разрешённую контейнерной политикой (обычно container_file_t), и проверьте её до выкладки.
+semanage fcontext -a -t container_file_t '/var/lib/containers/k8s-app-data/geocatalog-uploads(/.*)?'
+restorecon -Rv /var/lib/containers/k8s-app-data/geocatalog-uploads
+
 ctr -n k8s.io images pull ghcr.io/drem-link/tfgi-geocatalog:feature-geological-map-mvp
-```
-
-Дождитесь успешного pull образа, затем примените веб-приложение:
-
-```bash
 kubectl apply -f k8s/app.yaml
-kubectl get pvc,pods -n geocatalog -w
+kubectl rollout status deployment/geocatalog -n geocatalog --timeout=180s
+kubectl get pods,svc -n geocatalog -o wide
 ```
 
-Проверьте завершение PostGIS и доступность API перед использованием:
+### Локальная разработка
+
+Для Compose нужны `POSTGRES_PASSWORD`, `AUTH_USERNAME`, `AUTH_PASSWORD_HASH`, `SESSION_SECRET` в неотслеживаемом `.env`, а сертификат и ключ — `tls/tls.crt` и `tls/tls.key`. Сгенерируйте hash/session через `app.auth_cli`, серверный TLS-сертификат — локальным тестовым CA с SAN `IP:127.0.0.1,DNS:localhost`. Затем `docker compose up --build`; интерфейс будет на `https://127.0.0.1:8443`. Доверие test CA можно установить только на тестовом клиенте.
+
+Пример создания `.env` после генерации файлов учётки (username — латиница/цифры/`._@-`); сначала убедитесь, что `.env` ещё не существует:
 
 ```bash
-kubectl rollout status -n geocatalog deployment/geocatalog-postgis --timeout=180s
-kubectl rollout status -n geocatalog deployment/geocatalog --timeout=180s
-kubectl -n geocatalog port-forward --address 127.0.0.1 svc/geocatalog 8080:8080
+python -m app.auth_cli --output-dir .secrets
+umask 077
+test ! -e .env
+printf "POSTGRES_PASSWORD='%s'\nAUTH_USERNAME='%s'\nAUTH_PASSWORD_HASH='%s'\nSESSION_SECRET='%s'\n" \
+  "$(openssl rand -hex 32)" \
+  "$(cat .secrets/AUTH_USERNAME)" \
+  "$(cat .secrets/AUTH_PASSWORD_HASH)" \
+  "$(cat .secrets/SESSION_SECRET)" > .env
+chmod 600 .env
 ```
 
-В другом терминале проверьте `http://127.0.0.1:8080/healthz` и `http://127.0.0.1:8080/api/features`. Локальный `kubectl port-forward` доступен только на самом сервере; до авторизации и TLS не публикуйте приложение в LAN или Интернет.
+### Эксплуатационные ограничения
 
-Не удаляйте PVC/PV или каталог данных для «переустановки»: PV настроен с `Retain`, но удаление каталога уничтожит базу. Demo SQL запускается только при первой инициализации пустого Postgres data directory. Для последующих изменений используйте миграции, не запускайте init SQL повторно вручную без проверки. Для реальной эксплуатации нужны авторизация, TLS, резервные копии и проверка восстановления.
+- Сертификат сервера истекает через год; продлите его и обновите Secret до истечения.
+- Ротация `SESSION_SECRET` отзывает все выданные cookie. Смена пароля: обновите Argon2 hash в Secret и перезапустите Deployment.
+- PV использует hostPath `/var/lib/containers/k8s-app-data/postgis`, `Retain`; `20Gi` — декларативная ёмкость, не quota. Никогда не удаляйте PVC/PV или каталог базы для переустановки.
+- Загруженные файлы хранятся в отдельном hostPath `/var/lib/containers/k8s-app-data/geocatalog-uploads` через PVC `geocatalog-uploads` с политикой `Retain`. До применения `k8s/app.yaml` создайте этот каталог с владельцем UID/GID `10001` и настройте/проверьте постоянную SELinux-метку для контейнера на RED OS. `100Gi` в PV — запрос/объявленная ёмкость, не файловая quota; контролируйте свободное место хоста. Не удаляйте uploads PV/PVC или hostPath при обновлении приложения.
+- Schema/demo SQL запускаются автоматически только при первом создании пустого каталога PostgreSQL; последующие изменения делайте миграциями.
+- Резервируйте и проверяйте восстановление обеих частей вместе: PostGIS (включая `document_files`) и uploads PVC. Согласованная резервная копия должна сохранять соответствие записей файлов на диске и метаданных в БД. Пока не настроены проверенные бэкапы, восстановление и аудит — не загружайте закрытые документы/координаты.
 
 ## Проверки
 
 ```bash
-python -m pip install -r requirements.txt pytest
+pip install -r requirements-dev.txt
 pytest -q
+node --check app/static/app.js
+node --check app/static/catalog-admin.js
 ```
+
+### Демо-точки у Магадана
+
+Миграция `sql/003_magadan_demo_points.sql` добавляет две повторно применяемые синтетические точки у Магадана и отдельный демонстрационный документ для каждой. После обновления checkout на сервере примените её к уже существующей базе так (пароль БД подставляется внутри pod и не выводится):
+
+```bash
+cd /root/tfgi-geocatalog/geocatalog
+kubectl exec -i -n geocatalog deployment/geocatalog-postgis -- \
+  sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < sql/003_magadan_demo_points.sql
+```
+
+Координаты выбраны около Магадана только для демонстрации; записи не обозначают реальные геологические объекты или документы.

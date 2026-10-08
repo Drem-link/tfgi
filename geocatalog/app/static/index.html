@@ -4,36 +4,85 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Геологический каталог</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <header>
-    <div>
-      <h1>Геологический каталог</h1>
-      <p>Поиск материалов библиотеки по карте и метаданным</p>
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">◉</span>
+      <div>
+        <h1>Геологический каталог</h1>
+        <p><span id="feature-count">ЗАГРУЗКА…</span> · ПОИСК ПО ГЕОДАННЫМ И АРХИВНЫМ МЕТАДАННЫМ</p>
+      </div>
     </div>
-    <form id="search-form">
-      <input name="q" placeholder="Название, тема, описание">
-      <input name="region" placeholder="Регион">
-      <input name="year_from" type="number" min="1500" max="2200" placeholder="Год от">
-      <input name="year_to" type="number" min="1500" max="2200" placeholder="Год до">
-      <button type="submit">Найти</button>
-      <button type="reset" class="secondary">Сбросить</button>
-    </form>
+    <div class="header-actions">
+      <span id="user-label" class="user-label">● ЗАКРЫТЫЙ КАТАЛОГ</span>
+      <a id="catalog-admin-link" class="header-link" href="/admin/catalog" hidden>Добавить данные</a>
+      <a id="user-admin-link" class="header-link" href="/admin/users" hidden>Пользователи</a>
+      <button id="logout" class="ghost-button" type="button">Выйти</button>
+      <form id="logout-form" method="post" action="/auth/logout" hidden></form>
+    </div>
   </header>
   <main>
-    <section id="map" aria-label="Карта геологических объектов"></section>
-    <aside>
+    <section class="globe-panel" aria-label="Интерактивный трёхмерный глобус">
+      <div class="panel-topline">
+        <span>ПРОСТРАНСТВЕННЫЙ ОБЗОР</span>
+        <span id="globe-readout" class="globe-readout" aria-live="off">ШИР 59.6° · ДОЛГ 150.8° · МАСШТАБ 1.0×</span>
+      </div>
+      <div class="globe-stage">
+        <canvas id="globe" aria-label="Вращаемый глобус с геологическими объектами"></canvas>
+        <div class="globe-controls" aria-label="Управление масштабом глобуса">
+          <button id="zoom-out" type="button" aria-label="Уменьшить масштаб">−</button>
+          <button id="zoom-in" type="button" aria-label="Увеличить масштаб">+</button>
+          <button id="globe-reset" type="button" aria-label="Сбросить вид глобуса">СБРОС</button>
+        </div>
+        <div id="globe-tooltip" class="globe-tooltip" hidden></div>
+        <section id="globe-selection" class="globe-selection" aria-live="polite" hidden>
+          <button id="close-selection" class="selection-close" type="button" aria-label="Закрыть карточку">×</button>
+          <p class="eyebrow">ТОЧКА НА ГЛОБУСЕ</p>
+          <h2 id="selection-title"></h2>
+          <p id="selection-location" class="selection-location"></p>
+          <div id="selection-documents"></div>
+        </section>
+        <div class="globe-overlay">
+          <span class="live-dot"></span> ГЛОБУС · WGS 84
+        </div>
+      </div>
+      <div class="globe-legend">
+        <span><i class="legend-land"></i> Материки · точечная подложка</span>
+        <span><i class="legend-dot"></i> Точка / скважина</span>
+        <span><i class="legend-area"></i> Площадь / контур</span>
+        <span class="hint">КОНТУРЫ ОБЪЕКТОВ СХЕМАТИЧНЫ · НАЖМИТЕ НА ОБЪЕКТ, ЧТОБЫ ЦЕНТРИРОВАТЬ</span>
+      </div>
+    </section>
+    <aside class="results-panel">
       <div class="results-heading">
-        <h2>Объекты и документы</h2>
+        <div>
+          <p class="eyebrow">КАТАЛОГ</p>
+          <h2>Объекты и документы</h2>
+        </div>
         <span id="result-count">Загрузка…</span>
       </div>
       <p id="message" role="status"></p>
+      <form id="search-form">
+        <label class="search-label" for="q">ПОИСК</label>
+        <input id="q" name="q" placeholder="Название, тема, описание" autocomplete="off">
+        <div class="filters">
+          <input name="region" placeholder="Регион">
+          <input name="year_from" type="number" min="1500" max="2200" placeholder="Год от">
+          <input name="year_to" type="number" min="1500" max="2200" placeholder="Год до">
+        </div>
+        <div class="form-actions">
+          <button type="submit">Найти</button>
+          <button type="reset" class="secondary">Сбросить</button>
+          <button id="save-search" class="secondary" type="button">Сохранить подборку</button>
+          <a id="export-search" class="header-link" href="/api/export.csv">Экспорт CSV</a>
+        </div>
+      </form>
+      <div id="saved-searches" class="saved-searches" aria-label="Сохранённые подборки"></div>
       <div id="results"></div>
     </aside>
   </main>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js" defer></script>
 </body>
 </html>
