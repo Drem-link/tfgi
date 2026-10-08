@@ -1,5 +1,6 @@
 import os
 import json
+from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from argon2 import PasswordHasher
 from psycopg.errors import UniqueViolation
+from openpyxl import Workbook
 
 from app import auth_cli, main as main_module
 from app.main import app, livez, parse_bbox
@@ -42,10 +44,13 @@ class FakeAuthStore:
         self.features = {}
         self.documents = {}
         self.files = {}
+        self.feature_documents = []
         self.next_feature_id = 1
         self.next_document_id = 1
         self.next_file_id = 1
         self.geo_feature_row = None
+        self.saved_searches = {}
+        self.audit = []
 
     def connect(self):
         return FakeConnection(self)
@@ -66,8 +71,28 @@ class FakeConnection:
 
     def execute(self, query, params=()):
         sql = " ".join(query.lower().split())
-        if sql.startswith(("create table", "create index")) or "pg_advisory_xact_lock" in sql:
+        if sql.startswith(("create table", "create index", "create unique index", "alter table", "update features", "do $$")) or \
+                "pg_advisory_xact_lock" in sql:
             return FakeResult([])
+        if sql.startswith("insert into catalog_audit"):
+            self.store.audit.append({"action": params[1], "entity_type": params[2], "entity_id": params[3]})
+            return FakeResult([])
+        if sql.startswith("select doc_relation.id"):
+            return FakeResult([])
+        if sql.startswith("select id from documents where import_fingerprint"):
+            fingerprint = params[0]
+            document = next(
+                (item for item in self.store.documents.values()
+                 if item.get("import_fingerprint") == fingerprint),
+                None,
+            )
+            return FakeResult([{"id": document["id"]}] if document else [])
+        if sql.startswith("select id, name, kind, source_crs, st_astext(source_geom)"):
+            feature = next(
+                (item for item in self.store.features.values() if item["name"] == params[0]),
+                None,
+            )
+            return FakeResult([feature.copy()] if feature else [])
         if sql.startswith("select st_isvalid"):
             return FakeResult([{"valid": True}])
         if sql.startswith("select f.id, f.name, f.kind, f.metadata"):
@@ -77,6 +102,21 @@ class FakeConnection:
             feature = self.store.features.get(params[0])
             return FakeResult([feature.copy()] if feature else [])
         if sql.startswith("insert into features"):
+            if "source_geom" in sql:
+                name, kind = params[:2]
+                if any(item["name"] == name for item in self.store.features.values()):
+                    raise UniqueViolation("feature name already exists")
+                feature = {
+                    "id": self.store.next_feature_id,
+                    "name": name,
+                    "kind": kind,
+                    "source_crs": params[-1],
+                    "coordinates": tuple(params[5:7]),
+                    "geom": tuple(params[2:4]) if params[-1] == "EPSG:4326" else None,
+                }
+                self.store.features[feature["id"]] = feature
+                self.store.next_feature_id += 1
+                return FakeResult([feature.copy()])
             if "values (%s, 'well'," in sql:
                 name = params[0]
                 if any(item["name"] == name for item in self.store.features.values()):
@@ -91,7 +131,10 @@ class FakeConnection:
             self.store.next_feature_id += 1
             return FakeResult([feature.copy()])
         if sql.startswith("insert into documents"):
-            title, inventory_number, region, year, topic, description, archive_reference = params
+            (
+                title, inventory_number, region, year, topic, description, archive_reference,
+                *extra_fields,
+            ) = params
             if inventory_number and any(
                 item["inventory_number"] == inventory_number for item in self.store.documents.values()
             ):
@@ -106,10 +149,21 @@ class FakeConnection:
                 "description": description,
                 "archive_reference": archive_reference,
             }
+            if extra_fields:
+                document.update(dict(zip(
+                    (
+                        "tgf_number", "document_type", "authors", "coauthors", "executor_org", "work_year_start",
+                                "work_year_end", "created_place", "minerals", "archive_disk_number",
+                        "material_composition", "electronic_copy_status", "efgi_id", "efgi_url",
+                                "import_fingerprint",
+                    ),
+                    extra_fields,
+                )))
             self.store.documents[document["id"]] = document
             self.store.next_document_id += 1
             return FakeResult([{"id": document["id"]}])
         if sql.startswith("insert into feature_documents"):
+            self.store.feature_documents.append(tuple(params))
             return FakeResult([])
         if sql.startswith("insert into document_files"):
             document_id, storage_key, filename, media_type, size_bytes = params
@@ -306,6 +360,8 @@ def test_feature_detail_includes_downloadable_document_metadata(auth_client):
         "kind": "well",
         "metadata": {},
         "geometry": {"type": "Point", "coordinates": [150.8, 59.56]},
+        "source_geometry": {"type": "Point", "coordinates": [150.8, 59.56]},
+        "source_crs": "EPSG:4326",
         "documents": [{"id": 17, "title": "Survey"}],
     }
     auth_client.test_store.files[1] = {
@@ -326,6 +382,127 @@ def test_feature_detail_includes_downloadable_document_metadata(auth_client):
     assert response.json()["properties"]["documents"][0]["files"] == [
         {"id": 1, "filename": "report.pdf", "size_bytes": 1234}
     ]
+
+
+def test_gsk_feature_detail_keeps_source_geometry_but_has_no_globe_geometry(auth_client):
+    auth_client.test_store.geo_feature_row = {
+        "id": 8,
+        "name": "GSK site",
+        "kind": "well",
+        "metadata": {},
+        "geometry": None,
+        "source_geometry": {"type": "Point", "coordinates": [150.8, 59.56]},
+        "source_crs": "EPSG:7683",
+        "documents": [],
+    }
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+
+    response = auth_client.get("/api/features/8")
+
+    assert response.status_code == 200
+    assert response.json()["geometry"] is None
+    assert response.json()["properties"]["source_crs"] == "EPSG:7683"
+    assert response.json()["properties"]["source_geometry"]["coordinates"] == [150.8, 59.56]
+
+
+def test_csv_import_preview_validates_gsk_without_writing(auth_client):
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+    body = (
+        "feature_name,geometry_kind,coordinate_crs,document_title,longitude,latitude,authors\n"
+        "GSK site,well,EPSG:7683,Survey,150.8,59.56,Geologist\n"
+    )
+
+    response = auth_client.post(
+        "/api/admin/import/csv/preview",
+        content=body.encode(),
+        headers={"Origin": "https://catalog.test", "Content-Type": "text/csv"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is True
+    assert response.json()["rows"][0]["coordinate_crs"] == "EPSG:7683"
+    assert not auth_client.test_store.features
+    assert not auth_client.test_store.documents
+
+
+def test_csv_import_preview_rejects_out_of_range_coordinates(auth_client):
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+    body = (
+        "feature_name,geometry_kind,coordinate_crs,document_title,longitude,latitude\n"
+        "Broken,well,EPSG:7683,Survey,181,59\n"
+    )
+
+    response = auth_client.post(
+        "/api/admin/import/csv/preview",
+        content=body.encode(),
+        headers={"Origin": "https://catalog.test", "Content-Type": "text/csv"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert "outside longitude/latitude ranges" in response.json()["rows"][0]["errors"][0]
+
+
+def test_csv_import_commit_is_repeat_safe_and_preserves_gsk(auth_client):
+    auth_client.post(
+        "/auth/login",
+        data={"username": "catalog-admin", "password": "a-strong-test-password"},
+        follow_redirects=False,
+    )
+    body = (
+        "feature_name,geometry_kind,coordinate_crs,document_title,longitude,latitude,tgf_number\n"
+        "GSK site,well,EPSG:7683,Survey,150.8,59.56,TGF-0042\n"
+    )
+    headers = {"Origin": "https://catalog.test", "Content-Type": "text/csv"}
+
+    imported = auth_client.post("/api/admin/import/csv/commit", content=body.encode(), headers=headers)
+    repeated = auth_client.post("/api/admin/import/csv/commit", content=body.encode(), headers=headers)
+
+    assert imported.status_code == 201
+    assert imported.json()["imported_documents"] == 1
+    assert repeated.status_code == 201
+    assert repeated.json()["imported_documents"] == 0
+    assert repeated.json()["skipped_repeats"] == 1
+    assert auth_client.test_store.features[1]["source_crs"] == "EPSG:7683"
+    assert len(auth_client.test_store.documents) == 1
+    assert auth_client.test_store.documents[1]["tgf_number"] == "TGF-0042"
+    assert len(auth_client.test_store.feature_documents) == 1
+
+
+def test_xlsx_import_preview_and_rejects_formulas():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["feature_name", "geometry_kind", "coordinate_crs", "document_title", "source_wkt"])
+    sheet.append(["GSK site", "well", "EPSG:7683", "Survey", "POINT(150.8 59.56)"])
+    output = BytesIO()
+    workbook.save(output)
+
+    rows = main_module.parse_catalog_xlsx(output.getvalue())
+
+    assert rows[0]["errors"] == []
+    assert rows[0]["wkt"] == "POINT(150.8 59.56)"
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["feature_name", "geometry_kind", "coordinate_crs", "document_title"])
+    sheet.append(["=1+1", "well", "EPSG:7683", "Survey"])
+    output = BytesIO()
+    workbook.save(output)
+    with pytest.raises(HTTPException) as error:
+        main_module.parse_catalog_xlsx(output.getvalue())
+    assert "formulas are not allowed" in error.value.detail
 
 
 @pytest.mark.parametrize(
@@ -470,6 +647,7 @@ def test_admin_uploads_files_with_a_new_point_and_downloads_them(auth_client, tm
             "feature_metadata": "{}",
             "document_title": "Survey report",
             "inventory_number": "INV-001",
+            "tgf_number": "TGF-001",
             "region": "Magadan",
             "document_year": "2025",
         },
@@ -483,7 +661,10 @@ def test_admin_uploads_files_with_a_new_point_and_downloads_them(auth_client, tm
     assert response.status_code == 201
     assert len(response.json()["files"]) == 2
     assert len(auth_client.test_store.features) == 1
+    assert auth_client.test_store.features[1]["source_crs"] == "EPSG:7683"
+    assert auth_client.test_store.features[1]["geom"] is None
     assert len(auth_client.test_store.documents) == 1
+    assert auth_client.test_store.documents[1]["tgf_number"] == "TGF-001"
     assert len(auth_client.test_store.files) == 2
 
     file_id, file_info = next(iter(auth_client.test_store.files.items()))

@@ -13,7 +13,7 @@
       <a class="brand-icon" href="/" aria-label="В каталог">◉</a>
       <div>
         <h1>Добавление данных</h1>
-        <p>СОЗДАНИЕ ТОЧКИ ИЛИ ПЛОЩАДИ · КАРТОЧКИ ДОКУМЕНТОВ · ФАЙЛЫ</p>
+        <p>КАРТОЧКИ ТГФ · ГСК-2011 · ИМПОРТ · СВЯЗИ ДОКУМЕНТОВ</p>
       </div>
     </div>
     <div class="header-actions">
@@ -47,6 +47,12 @@
             <option value="well">Точка</option>
             <option value="area">Площадь / контур</option>
           </select>
+          <label for="coordinate-crs">Система координат исходных координат</label>
+          <select id="coordinate-crs" name="coordinate_crs">
+            <option value="EPSG:7683">ГСК-2011 (EPSG:7683) — не отображать на глобусе</option>
+            <option value="EPSG:4326">WGS 84 (EPSG:4326) — отображать на глобусе</option>
+          </select>
+          <p class="hint">ГСК-2011 сохраняется без преобразования. До утверждённой методики трансформации точка не попадает на глобус WGS 84.</p>
           <div id="point-fields" class="coordinate-fields">
             <label>Долгота
               <input name="longitude" type="number" min="-180" max="180" step="any" placeholder="150.80">
@@ -73,6 +79,11 @@
             <label>Фондовый номер
               <input name="inventory_number" maxlength="200">
             </label>
+            <label>Номер ТГФ
+              <input name="tgf_number" maxlength="200">
+            </label>
+          </div>
+          <div class="coordinate-fields">
             <label>Год
               <input name="document_year" type="number" min="1500" max="2200">
             </label>
@@ -81,6 +92,45 @@
           <label>Тема<input name="topic" maxlength="1000"></label>
           <label>Описание<textarea name="description" rows="3" maxlength="10000"></textarea></label>
           <label>Архивный шифр / место хранения<input name="archive_reference" maxlength="1000"></label>
+          <div class="coordinate-fields">
+            <label>Вид документа ТГФ<input name="document_type" maxlength="200" placeholder="Отчёт, карта, протокол…"></label>
+            <label>Организация-исполнитель<input name="executor_org" maxlength="500"></label>
+          </div>
+          <div class="coordinate-fields">
+            <label>Авторы<input name="authors" maxlength="2000"></label>
+            <label>Соавторы<input name="coauthors" maxlength="2000"></label>
+          </div>
+          <div class="coordinate-fields">
+            <label>Годы работ с<input name="work_year_start" type="number" min="1500" max="2200"></label>
+            <label>по<input name="work_year_end" type="number" min="1500" max="2200"></label>
+          </div>
+          <div class="coordinate-fields">
+            <label>Место составления<input name="created_place" maxlength="500"></label>
+            <label>Полезные ископаемые<input name="minerals" maxlength="2000"></label>
+          </div>
+          <div class="coordinate-fields">
+            <label>Номер диска / носителя<input name="archive_disk_number" maxlength="200"></label>
+            <label>Электронная копия<input name="electronic_copy_status" maxlength="200"></label>
+          </div>
+          <label>Состав и объём<input name="material_composition" maxlength="4000"></label>
+          <div class="coordinate-fields">
+            <label>Идентификатор ЕФГИ<input name="efgi_id" maxlength="200"></label>
+            <label>Ссылка на запись ЕФГИ<input name="efgi_url" type="url" maxlength="2000"></label>
+          </div>
+          <label>Связать с существующим документом
+            <select id="related-document" name="related_document_id">
+              <option value="">Не связывать</option>
+            </select>
+          </label>
+          <label>Тип связи
+            <select name="relation_type">
+              <option value="related">Связанный документ</option>
+              <option value="appendix">Приложение</option>
+              <option value="protocol">Протокол</option>
+              <option value="map">Карта</option>
+              <option value="copy_of">Копия</option>
+            </select>
+          </label>
         </div>
 
         <div class="form-section">
@@ -93,6 +143,27 @@
         <button id="submit-upload" type="submit">Сохранить объект и документы</button>
       </form>
       <p id="catalog-message" role="status"></p>
+    </section>
+    <section class="catalog-admin-panel catalog-tools">
+      <p class="eyebrow">ПАКЕТНЫЕ ОПЕРАЦИИ</p>
+      <h2>Импорт CSV с проверкой</h2>
+      <p class="help">Загрузи CSV UTF-8 или XLSX, проверь ошибки и только затем подтверди транзакционный импорт. Поддерживаются точки и полигоны, EPSG:7683 и EPSG:4326; максимум 1000 строк / 5 МБ. В XLSX используется первый лист, формулы запрещены.</p>
+      <label for="csv-import">CSV-файл</label>
+      <input id="csv-import" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <button id="preview-import" class="secondary" type="button">Проверить CSV</button>
+      <div id="import-preview" class="import-preview" aria-live="polite"></div>
+      <h2>Редактирование карточки</h2>
+      <label for="edit-document">Документ</label>
+      <select id="edit-document"><option value="">Выберите документ…</option></select>
+      <label for="document-json">Поля карточки (JSON)</label>
+      <textarea id="document-json" rows="12" spellcheck="false"></textarea>
+      <button id="save-document" class="secondary" type="button">Сохранить карточку</button>
+      <h2>Контроль качества каталога</h2>
+      <button id="refresh-quality" class="secondary" type="button">Проверить записи</button>
+      <div id="quality-report" class="quality-report"></div>
+      <h2>Последние действия</h2>
+      <button id="refresh-audit" class="secondary" type="button">Обновить журнал</button>
+      <div id="audit-log" class="audit-log"></div>
     </section>
     <section class="catalog-admin-panel">
       <div class="catalog-files-title">

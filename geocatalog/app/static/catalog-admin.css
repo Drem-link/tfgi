@@ -21,6 +21,19 @@
 .uploaded-file strong { color: #f6d6bd; font-size: .74rem; overflow-wrap: anywhere; }
 .uploaded-file p { margin: 0; color: #9299b8; font-size: .67rem; overflow-wrap: anywhere; }
 .uploaded-file button { justify-self: start; }
+.catalog-tools { display: grid; align-content: start; gap: 10px; }
+.catalog-tools .eyebrow, .catalog-tools h2 { margin: 0; }
+.catalog-tools h2:not(:first-of-type) { margin-top: 18px; }
+.catalog-tools input[type="file"] {
+  width: 100%; min-height: 40px; padding: 8px; border: 1px solid #3c456b;
+  background: #10162c; color: #c2c1dd; font: inherit; font-size: .72rem;
+}
+.import-preview, .quality-report, .audit-log { display: grid; gap: 5px; max-height: 300px; overflow: auto; }
+.import-preview p, .quality-report p, .audit-log p {
+  margin: 0; color: #9ea4bf; font-size: .68rem; line-height: 1.45; overflow-wrap: anywhere;
+}
+.quality-report .quality-count { margin-top: 8px; color: #e5c4ae; }
+.audit-log { padding-top: 8px; border-top: 1px solid #2c3452; }
 @media (max-width: 850px) {
   .catalog-admin-layout { grid-template-columns: 1fr; }
   .catalog-admin-panel { padding: 18px; }

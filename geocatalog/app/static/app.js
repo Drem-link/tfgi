@@ -28,6 +28,8 @@ const selectionPanel = document.querySelector("#globe-selection");
 const selectionTitle = document.querySelector("#selection-title");
 const selectionLocation = document.querySelector("#selection-location");
 const selectionDocuments = document.querySelector("#selection-documents");
+const selectionEyebrow = selectionPanel.querySelector(".eyebrow");
+const savedSearches = document.querySelector("#saved-searches");
 
 function text(tag, value, className) {
   const element = document.createElement(tag);
@@ -44,10 +46,36 @@ function showDocuments(container, documents) {
   for (const doc of documents) {
     const card = text("div", null, "doc");
     card.append(text("strong", doc.title));
-    const metadata = [doc.inventory_number, doc.region, doc.year, doc.topic].filter(Boolean).join(" · ");
+    const metadata = [
+      doc.inventory_number, doc.tgf_number && `ТГФ ${doc.tgf_number}`,
+      doc.region, doc.year, doc.document_type,
+      doc.work_year_start && doc.work_year_end
+        ? `работы ${doc.work_year_start}–${doc.work_year_end}` : null,
+      doc.topic,
+    ].filter(Boolean).join(" · ");
     if (metadata) card.append(text("p", metadata));
+    const archival = [doc.authors, doc.coauthors, doc.executor_org, doc.created_place,
+      doc.minerals, doc.archive_disk_number, doc.material_composition,
+      doc.electronic_copy_status].filter(Boolean).join(" · ");
+    if (archival) card.append(text("p", archival));
     if (doc.description) card.append(text("p", doc.description));
     if (doc.archive_reference) card.append(text("p", `Шифр/место хранения: ${doc.archive_reference}`));
+    let efgiUrl;
+    try {
+      efgiUrl = new URL(doc.efgi_url);
+    } catch {
+      efgiUrl = null;
+    }
+    if (efgiUrl && ["http:", "https:"].includes(efgiUrl.protocol)) {
+      const link = text("a", `ЕФГИ${doc.efgi_id ? ` · ${doc.efgi_id}` : ""}`, "file-download");
+      link.href = efgiUrl.href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      card.append(link);
+    }
+    for (const relation of doc.relations || []) {
+      card.append(text("p", `Связанный документ (${relation.relation_type}): ${relation.title}`));
+    }
     for (const file of doc.files || []) {
       const link = text("a", `${file.filename} · ${formatFileSize(file.size_bytes)}`, "file-download");
       link.href = `/api/files/${encodeURIComponent(file.id)}`;
@@ -70,12 +98,17 @@ function renderFeature(feature, target = results) {
   card.tabIndex = 0;
   card.setAttribute("role", "button");
   card.dataset.featureId = feature.id;
-  card.setAttribute("aria-label", `${props.name}, показать на глобусе`);
+  card.setAttribute("aria-label", feature.geometry
+    ? `${props.name}, показать на глобусе`
+    : `${props.name}, открыть карточку; координаты не нанесены на глобус`);
   const selected = feature.id === selectedFeature?.id;
   card.setAttribute("aria-pressed", String(selected));
   if (selected) card.classList.add("selected");
   card.append(text("h3", props.name));
   card.append(text("p", `${kindLabel(props.kind)} · документов: ${props.documents.length}`));
+  if (!feature.geometry) {
+    card.append(text("p", `Исходные координаты ${props.source_crs || "неизвестной CRS"} сохранены; на глобусе WGS 84 не отображаются.`));
+  }
   if (props.metadata && Object.keys(props.metadata).length) {
     card.append(text("p", JSON.stringify(props.metadata)));
   }
@@ -96,6 +129,7 @@ function kindLabel(kind) {
 
 function featureCoordinates(feature) {
   const geometry = feature.geometry;
+  if (!geometry) return [];
   if (geometry.type === "Point") return [geometry.coordinates];
   if (geometry.type === "MultiPoint") return geometry.coordinates;
   return [];
@@ -104,10 +138,13 @@ function featureCoordinates(feature) {
 function renderSelection(feature) {
   selectedFeature = feature;
   selectionTitle.textContent = feature.properties.name;
-  const coordinates = featureCoordinates(feature)[0] || firstPolygonCoordinate(feature.geometry);
+  selectionEyebrow.textContent = feature.geometry ? "ОБЪЕКТ НА ГЛОБУСЕ" : "КАРТОЧКА ОБЪЕКТА";
+  const geometry = feature.geometry || feature.properties.source_geometry;
+  const coordinates = geometry && (featureCoordinates({ geometry })[0] || firstPolygonCoordinate(geometry));
   selectionLocation.textContent = coordinates
-    ? `${coordinates[1].toFixed(4)}° с. ш., ${coordinates[0].toFixed(4)}° в. д.`
-    : "";
+    ? `${feature.properties.source_crs || "EPSG:4326"}: ${coordinates[1].toFixed(6)}°, ${coordinates[0].toFixed(6)}°` +
+      (feature.geometry ? "" : " · не нанесено на WGS 84 без утверждённой трансформации")
+    : "Координаты не указаны.";
   selectionDocuments.replaceChildren();
   showDocuments(selectionDocuments, feature.properties.documents);
   selectionPanel.hidden = false;
@@ -316,6 +353,7 @@ function drawRing(ring, geometry, fill, stroke) {
 
 function drawFeatureGeometry(feature, geometry) {
   const geo = feature.geometry;
+  if (!geo) return;
   if (!["Polygon", "MultiPolygon"].includes(geo.type)) return;
   const area = feature.properties.kind === "area";
   const stroke = area ? "#d79a77" : "#f4c8aa";
@@ -334,6 +372,7 @@ function buildMarkerGroups(geometry) {
   const cellSize = 22;
   const clusterDistance = 18;
   for (const feature of features) {
+    if (!feature.geometry) continue;
     if (["Polygon", "MultiPolygon"].includes(feature.geometry.type)) continue;
     for (const coordinates of featureCoordinates(feature)) {
       const point = project(coordinates, geometry);
@@ -433,11 +472,13 @@ function drawGlobe(now) {
 }
 
 function focusFeature(feature) {
-  const coords = featureCoordinates(feature)[0] || firstPolygonCoordinate(feature.geometry);
-  if (!coords) return;
-  rotation.longitude = coords[0];
-  rotation.latitude = coords[1];
-  targetZoom = Math.max(targetZoom, 1.12);
+  const coords = feature.geometry &&
+    (featureCoordinates(feature)[0] || firstPolygonCoordinate(feature.geometry));
+  if (coords) {
+    rotation.longitude = coords[0];
+    rotation.latitude = coords[1];
+    targetZoom = Math.max(targetZoom, 1.12);
+  }
   hoveredFeature = feature;
   renderSelection(feature);
   for (const card of results.children) {
@@ -450,6 +491,7 @@ function focusFeature(feature) {
 }
 
 function firstPolygonCoordinate(geometry) {
+  if (!geometry) return null;
   if (geometry.type === "Polygon") return geometry.coordinates[0]?.[0];
   if (geometry.type === "MultiPolygon") return geometry.coordinates[0]?.[0]?.[0];
   return null;
@@ -484,7 +526,7 @@ function featureAt(x, y) {
   let nearest = null;
   let nearestDistance = Infinity;
   for (const feature of features) {
-    if (!["Polygon", "MultiPolygon"].includes(feature.geometry.type)) continue;
+    if (!feature.geometry || !["Polygon", "MultiPolygon"].includes(feature.geometry.type)) continue;
     for (const coordinates of coordinatesOf(feature)) {
       const point = project(coordinates, globeGeometry);
       const distance = Math.hypot(point.x - x, point.y - y);
@@ -624,6 +666,9 @@ async function search() {
   const requestId = ++searchRequestSequence;
   const params = new URLSearchParams(new FormData(document.querySelector("#search-form")));
   for (const [key, value] of [...params.entries()]) if (!value) params.delete(key);
+  const exportUrl = new URL("/api/export.csv", location.href);
+  exportUrl.search = params.toString();
+  document.querySelector("#export-search").href = exportUrl.pathname + exportUrl.search;
   try {
     const response = await fetch(`/api/features?${params}`, { credentials: "same-origin" });
     if (response.status === 401) {
@@ -650,9 +695,72 @@ async function search() {
   }
 }
 
+async function loadSavedSearches() {
+  const response = await fetch("/api/saved-searches", { credentials: "same-origin" });
+  if (response.status === 401) {
+    location.assign("/login");
+    return;
+  }
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.detail || "Не удалось загрузить подборки");
+  savedSearches.replaceChildren();
+  for (const item of body.searches) {
+    const row = document.createElement("div");
+    row.className = "saved-search";
+    const apply = text("button", item.name, "secondary");
+    apply.type = "button";
+    apply.addEventListener("click", () => {
+      const form = document.querySelector("#search-form");
+      for (const [key, value] of Object.entries(item.filters)) {
+        const input = form.elements.namedItem(key);
+        if (input) input.value = value;
+      }
+      search();
+    });
+    const remove = text("button", "×", "secondary");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `Удалить подборку ${item.name}`);
+    remove.addEventListener("click", async () => {
+      try {
+        const deleted = await fetch(`/api/saved-searches/${item.id}`, {
+          method: "DELETE", credentials: "same-origin",
+        });
+        if (!deleted.ok) throw new Error("Не удалось удалить подборку.");
+        await loadSavedSearches();
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    });
+    row.append(apply, remove);
+    savedSearches.append(row);
+  }
+}
+
 document.querySelector("#search-form").addEventListener("submit", (event) => {
   event.preventDefault();
   search();
+});
+document.querySelector("#save-search").addEventListener("click", async () => {
+  const name = window.prompt("Название подборки");
+  if (!name?.trim()) return;
+  const filters = Object.fromEntries(
+    [...new FormData(document.querySelector("#search-form")).entries()]
+      .filter(([, value]) => String(value).trim())
+      .map(([key, value]) => [key, ["year_from", "year_to"].includes(key) ? Number(value) : value]),
+  );
+  try {
+    const response = await fetch("/api/saved-searches", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim(), filters }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "Не удалось сохранить подборку.");
+    await loadSavedSearches();
+  } catch (error) {
+    message.textContent = error.message;
+  }
 });
 document.querySelector("#search-form").addEventListener("reset", () => setTimeout(search, 0));
 document.querySelector("#logout").addEventListener("click", () => document.querySelector("#logout-form").requestSubmit());
@@ -696,3 +804,4 @@ fetch("/api/session", { credentials: "same-origin" })
 resizeCanvas();
 window.requestAnimationFrame(drawGlobe);
 search();
+loadSavedSearches().catch((error) => { message.textContent = error.message; });

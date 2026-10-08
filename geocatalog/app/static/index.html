@@ -75,8 +75,11 @@
         <div class="form-actions">
           <button type="submit">Найти</button>
           <button type="reset" class="secondary">Сбросить</button>
+          <button id="save-search" class="secondary" type="button">Сохранить подборку</button>
+          <a id="export-search" class="header-link" href="/api/export.csv">Экспорт CSV</a>
         </div>
       </form>
+      <div id="saved-searches" class="saved-searches" aria-label="Сохранённые подборки"></div>
       <div id="results"></div>
     </aside>
   </main>

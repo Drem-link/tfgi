@@ -156,11 +156,14 @@ input { width: 100%; background: #10162c; color: #fff0dd; font-size: .78rem; }
 input::placeholder { color: #787f9f; }
 input:focus { border-color: #aaa2eb; outline: none; }
 .filters { display: grid; grid-template-columns: minmax(0, 1fr) 90px 90px; gap: 7px; }
-.form-actions { display: flex; gap: 8px; }
+.form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 button { border-color: #f2c5a5; background: #f2c5a5; color: #101329; font-size: .75rem; font-weight: 700; cursor: pointer; }
 button.secondary, button.ghost-button { border-color: #41496a; background: transparent; color: #c2c1dd; }
 button.ghost-button { min-height: 34px; padding: 7px 10px; }
 .header-link { color: #c2c1dd; font-size: .75rem; }
+.saved-searches { display: flex; flex-wrap: wrap; gap: 6px; }
+.saved-search { display: flex; gap: 3px; }
+.saved-search button { min-height: 30px; padding: 5px 8px; font-size: .68rem; }
 .feature-card { padding: 15px 0; border-bottom: 1px solid #2c3452; cursor: pointer; }
 .feature-card:focus, .feature-card:hover, .feature-card.selected {
   outline: none;
